@@ -114,6 +114,6 @@ First agent to enter gets 120 HP, second gets 100 HP
 
 ---
 
-**Author**: AI Programming Assistant  
+**Author**: Ariyan Afyab Spandan & Himel Hossain
 **Date**: March 2, 2026  
 **License**: Open Source
