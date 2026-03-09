@@ -131,25 +131,22 @@ class Maze(Grid):
             for c in range(ARENA_START, ARENA_END + 1):
                 self.grid[r][c] = CellType.ARENA
         
-        # Add walls around the maze (deterministic pattern)
+        # Add walls around the maze (simpler pattern to ensure paths exist)
         wall_positions = [
             (0, 1), (0, 5),  # Top row
-            (1, 0), (1, 6),  # Row 1
-            (5, 0), (5, 6),  # Row 5
+            (1, 0), (1, 6),  # Row 1 corners
+            (5, 0), (5, 6),  # Row 5 corners
             (6, 2), (6, 4),  # Bottom row
-            (2, 0), (4, 6),  # Side walls
         ]
         
         for r, c in wall_positions:
             if self.is_maze_cell(r, c):
                 self.grid[r][c] = CellType.WALL
         
-        # Add traps in strategic positions
+        # Add traps in strategic positions (fewer to ensure paths)
         trap_positions = [
             (0, 3),  # Top center
-            (1, 1),  # Top left area
             (5, 5),  # Bottom right area
-            (3, 0),  # Left middle
             (3, 6),  # Right middle
         ]
         
@@ -158,7 +155,7 @@ class Maze(Grid):
                 self.grid[r][c] = CellType.TRAP
                 self.traps.add((r, c))
         
-        # Set arena entry point (single entry from north side of arena)
+        # Set arena entry point (on the western edge to ensure accessibility)
         self.arena_entry = (3, 1)
         self.grid[3][1] = CellType.ENTRY
     
@@ -174,6 +171,34 @@ class Maze(Grid):
         """Check if cell is a trap"""
         return (row, col) in self.traps
     
+    def is_walkable(self, row: int, col: int, maze_phase: bool = False) -> bool:
+        """Check if agent can walk on this cell"""
+        if not self.is_valid_cell(row, col):
+            return False
+        
+        cell_type = self.grid[row][col]
+        
+        # Walls are never walkable
+        if cell_type == CellType.WALL:
+            return False
+        
+        # During maze phase, arena cells are not walkable (they're hidden)
+        # Only the entry point allows transition to arena
+        if maze_phase and cell_type == CellType.ARENA:
+            return False
+        
+        return True
+    
+    def get_neighbors(self, row: int, col: int, maze_phase: bool = False) -> List[Tuple[int, int]]:
+        """Get all valid neighboring cells (up, down, left, right)"""
+        neighbors = []
+        for direction in Direction:
+            dr, dc = direction.value
+            new_row, new_col = row + dr, col + dc
+            if self.is_walkable(new_row, new_col, maze_phase):
+                neighbors.append((new_row, new_col))
+        return neighbors
+    
     def get_valid_spawn_cells(self, min_distance_from_entry: int = 3) -> List[Tuple[int, int]]:
         """Get valid spawn positions in maze, far from arena entry"""
         valid_cells = []
@@ -188,7 +213,8 @@ class Maze(Grid):
         return valid_cells
     
     def display(self, agent1_pos: Tuple[int, int], agent2_pos: Tuple[int, int],
-                agent1_sym: str = 'A', agent2_sym: str = 'V', phase: int = 1):
+                agent1_sym: str = 'A', agent2_sym: str = 'V', phase: int = 1,
+                agent1_in_arena: bool = False, agent2_in_arena: bool = False):
         """Display the maze with agents"""
         print("\n" + "=" * 40)
         if phase == 1:
@@ -198,9 +224,10 @@ class Maze(Grid):
             for r in range(self.size):
                 row_str = f"{r}|"
                 for c in range(self.size):
-                    if (r, c) == agent1_pos:
+                    # Don't show agents who have already entered the arena
+                    if (r, c) == agent1_pos and not agent1_in_arena:
                         row_str += agent1_sym + " "
-                    elif (r, c) == agent2_pos:
+                    elif (r, c) == agent2_pos and not agent2_in_arena:
                         row_str += agent2_sym + " "
                     else:
                         cell_type = self.grid[r][c]
@@ -222,26 +249,68 @@ class Arena(Grid):
         """Initialize 3×3 battle arena"""
         super().__init__(3)  # Arena is 3×3
         self.items: Dict[Tuple[int, int], ItemType] = {}
+        self.item_usage: Dict[Tuple[int, int], Set[str]] = {}  # Track which agents used each item
         self._place_items()
     
     def _place_items(self):
-        """Randomly place MedKits and PowerUps in the arena"""
+        """Randomly place MedKits in the arena"""
         # Place 1-2 MedKits
         medkit_positions = random.sample([(0, 0), (0, 2), (2, 0), (2, 2)], k=2)
         for pos in medkit_positions:
             self.items[pos] = ItemType.MEDKIT
+            self.item_usage[pos] = set()  # Track usage
         
-        # Place 1 PowerUp in center
-        if random.random() > 0.5:
-            self.items[(1, 1)] = ItemType.POWERUP
+        # PowerUp is NOT placed initially - it spawns when an agent reaches 50 HP or less
     
-    def get_item(self, row: int, col: int) -> Optional[ItemType]:
-        """Get and remove item at position"""
-        return self.items.pop((row, col), None)
+    def can_pickup_item(self, row: int, col: int, agent_name: str) -> bool:
+        """Check if agent can pick up item at position"""
+        pos = (row, col)
+        if pos not in self.items:
+            return False
+        # Agent can only pick up each item once
+        return agent_name not in self.item_usage.get(pos, set())
+    
+    def get_item(self, row: int, col: int, agent_name: str) -> Optional[ItemType]:
+        """Get item at position and track usage. Remove item after both agents used it."""
+        pos = (row, col)
+        if pos not in self.items:
+            return None
+        
+        # Check if agent already used this item
+        if agent_name in self.item_usage.get(pos, set()):
+            return None
+        
+        # Mark item as used by this agent
+        self.item_usage[pos].add(agent_name)
+        item = self.items[pos]
+        
+        # PowerUp is single-use: remove immediately after first pickup
+        if item == ItemType.POWERUP:
+            del self.items[pos]
+            del self.item_usage[pos]
+            self.powerup_used = True
+        # MedKits can be used by both agents: remove after both used it
+        elif len(self.item_usage[pos]) >= 2:
+            del self.items[pos]
+            del self.item_usage[pos]
+        
+        return item
     
     def has_item(self, row: int, col: int) -> bool:
         """Check if position has an item"""
         return (row, col) in self.items
+    
+    def spawn_powerup(self):
+        """Spawn PowerUp in center of arena if not already spawned"""
+        if not self.powerup_spawned and not self.powerup_used:
+            center_pos = (1, 1)
+            # Only spawn if center is empty
+            if center_pos not in self.items:
+                self.items[center_pos] = ItemType.POWERUP
+                self.item_usage[center_pos] = set()
+                self.powerup_spawned = True
+                return True
+        return False
     
     def convert_to_arena_coords(self, global_pos: Tuple[int, int]) -> Tuple[int, int]:
         """Convert global grid position to arena-local coordinates"""
@@ -325,7 +394,8 @@ class AStarPathfinder:
             
             closed_set.add(current)
             
-            for neighbor in self.maze.get_neighbors(current[0], current[1]):
+            # Use maze_phase=True to exclude arena cells from pathfinding
+            for neighbor in self.maze.get_neighbors(current[0], current[1], maze_phase=True):
                 if neighbor in closed_set or neighbor == blocked_pos:
                     continue
                 
@@ -391,7 +461,8 @@ class UniformCostSearch:
             
             closed_set.add(current)
             
-            for neighbor in self.maze.get_neighbors(current[0], current[1]):
+            # Use maze_phase=True to exclude arena cells from pathfinding
+            for neighbor in self.maze.get_neighbors(current[0], current[1], maze_phase=True):
                 if neighbor in closed_set or neighbor == blocked_pos:
                     continue
                 
@@ -516,11 +587,13 @@ class AegisAgent(Agent):
         """Decide next move in maze phase using A* with trap avoidance"""
         # Find path to arena entry using A*
         entry = maze.arena_entry
+        # Don't block opponent if they're already in the arena
+        blocked = None if opponent.in_arena else opponent.position
         path = self.pathfinder.find_path(
             self.position, 
             entry,
             avoid_traps=True,  # Strategically avoid traps
-            blocked_pos=opponent.position
+            blocked_pos=blocked
         )
         
         if len(path) > 1:
@@ -660,10 +733,12 @@ class VeloAgent(Agent):
         """Decide next move in maze using Uniform Cost Search (aggressive shortest path)"""
         # Find shortest path to arena entry (may go through traps)
         entry = maze.arena_entry
+        # Don't block opponent if they're already in the arena
+        blocked = None if opponent.in_arena else opponent.position
         path = self.pathfinder.find_path(
             self.position,
             entry,
-            blocked_pos=opponent.position
+            blocked_pos=blocked
         )
         
         if len(path) > 1:
@@ -795,7 +870,8 @@ class GameController:
         print("Objective: Reach the arena entry point (E)")
         print("Legend: . = path, # = wall, T = trap, E = entry")
         
-        self.maze.display(self.aegis.position, self.velo.position, phase=1)
+        self.maze.display(self.aegis.position, self.velo.position, phase=1,
+                         agent1_in_arena=self.aegis.in_arena, agent2_in_arena=self.velo.in_arena)
     
     def run(self):
         """Main game loop"""
@@ -873,7 +949,8 @@ class GameController:
                 print(f"   ✅ {self.velo.name} has reached the ARENA ENTRY!")
         
         # Display maze
-        self.maze.display(self.aegis.position, self.velo.position, phase=1)
+        self.maze.display(self.aegis.position, self.velo.position, phase=1,
+                         agent1_in_arena=self.aegis.in_arena, agent2_in_arena=self.velo.in_arena)
         
         # Check if both entered arena
         if self.aegis.in_arena and self.velo.in_arena:
@@ -925,6 +1002,12 @@ class GameController:
         print(f"\n{'=' * 60}")
         print(f"TURN {self.turn_count} - COMBAT PHASE")
         print(f"{'=' * 60}")
+        
+        # Check if PowerUp should spawn (when any agent reaches 50 HP or less)
+        if not self.arena.powerup_spawned and not self.arena.powerup_used:
+            if self.aegis.hp <= 50 or self.velo.hp <= 50:
+                if self.arena.spawn_powerup():
+                    print("\n⚡ POWERUP SPAWNED in the center! (First to grab gets the boost)")
         
         # Display status
         aegis_status = []
@@ -978,9 +1061,10 @@ class GameController:
                 
                 # Check for item pickup
                 arena_coords = self.arena.convert_to_arena_coords(move)
-                if self.arena.has_item(arena_coords[0], arena_coords[1]):
-                    item = self.arena.get_item(arena_coords[0], arena_coords[1])
-                    attacker.pickup_item(item)
+                if self.arena.can_pickup_item(arena_coords[0], arena_coords[1], attacker.name):
+                    item = self.arena.get_item(arena_coords[0], arena_coords[1], attacker.name)
+                    if item:  # Only if successfully retrieved
+                        attacker.pickup_item(item)
         
         elif action == Action.ATTACK:
             if attacker.is_adjacent(defender.position):
