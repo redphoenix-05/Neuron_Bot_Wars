@@ -43,14 +43,16 @@ M M M M M M M
 
 **Spawn Rules**:
 - Agents spawn randomly in maze cells
-- Must spawn far from arena entry (minimum 2-4 tiles distance)
+- Must spawn far from arena entry (minimum Manhattan distance ≥ 3)
 - Cannot spawn on walls, traps, or entry point
+- Maze generation is validated so both spawns always have a path to `E`
+- If maze navigation exceeds 200 turns, the maze regenerates (deadlock safety)
 
 #### Phase 2: Battle Arena (3×3 Grid)
 
 **Arena Items**:
 - **MedKit (H)**: Restores 20 HP (disappears after use)
-- **Power Up (P)**: Boosts next attack to 30 damage (single use)
+- **Power Up (P)**: Spawns once (only when any agent reaches 50 HP or less), boosts next attack to 30 damage
 
 **Combat Actions**:
 1. **Move** - Move to adjacent cell (can pick up items)

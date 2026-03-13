@@ -20,11 +20,16 @@ Requirements:
 - Action restrictions: Cannot repeat Move, Defend, Power Attack consecutively
 """
 
+import sys
 import heapq
 import random
 from typing import List, Tuple, Optional, Set, Dict
 from copy import deepcopy
 from enum import Enum
+
+# Force UTF-8 output so Unicode/emoji characters don't crash on Windows (cp1252)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 
 # =============================================================================
@@ -49,10 +54,10 @@ class ItemType(Enum):
 class Action(Enum):
     """Available actions during combat"""
     MOVE = 'move'
-    ATTACK = 'attack'
     DEFEND = 'defend'
-    POWER_ATTACK = 'power_attack'
-    CONCEDE = 'concede'
+    PULSE_STRIKE = 'pulse_strike'
+    LOGIC_BURST = 'logic_burst'
+    ELEMENTAL_BEAM = 'elemental_beam'
 
 
 class Direction(Enum):
@@ -68,11 +73,14 @@ GRID_SIZE = 7
 ARENA_START = 2  # Arena starts at row/col 2
 ARENA_END = 4    # Arena ends at row/col 4 (3×3 arena)
 INITIAL_HP = 100
-ATTACK_DAMAGE = 15
-POWER_ATTACK_DAMAGE = 30
+PULSE_STRIKE_DAMAGE = 10
+LOGIC_BURST_DAMAGE = 20
+ELEMENTAL_BEAM_DAMAGE = 30
 DEFEND_REDUCTION = 0.2  # 80% damage reduction (take only 20%)
 TRAP_DAMAGE = 10
 MEDKIT_HEAL = 20
+MIN_SPAWN_DISTANCE = 3
+MAX_MAZE_TURNS = 200
 
 
 # =============================================================================
@@ -125,39 +133,118 @@ class Maze(Grid):
         self._generate_maze()
     
     def _generate_maze(self):
-        """Generate maze with walls, traps, and arena entry point"""
-        # Mark arena cells (center 3×3)
+        """Generate maze layout (arena + entry + random walls)."""
+        self._reset_to_paths()
+        self._mark_arena_cells()
+        self._set_arena_entry()
+        self._place_random_walls()
+
+    def _reset_to_paths(self):
+        """Reset full grid to walkable path cells before generation."""
+        self.grid = [[CellType.PATH for _ in range(self.size)] for _ in range(self.size)]
+        self.traps.clear()
+
+    def _mark_arena_cells(self):
+        """Mark center 3×3 as the battle arena."""
         for r in range(ARENA_START, ARENA_END + 1):
             for c in range(ARENA_START, ARENA_END + 1):
                 self.grid[r][c] = CellType.ARENA
-        
-        # Add walls around the maze (simpler pattern to ensure paths exist)
-        wall_positions = [
-            (0, 1), (0, 5),  # Top row
-            (1, 0), (1, 6),  # Row 1 corners
-            (5, 0), (5, 6),  # Row 5 corners
-            (6, 2), (6, 4),  # Bottom row
-        ]
-        
-        for r, c in wall_positions:
-            if self.is_maze_cell(r, c):
-                self.grid[r][c] = CellType.WALL
-        
-        # Add traps in strategic positions (fewer to ensure paths)
-        trap_positions = [
-            (0, 3),  # Top center
-            (5, 5),  # Bottom right area
-            (3, 6),  # Right middle
-        ]
-        
-        for r, c in trap_positions:
-            if self.is_maze_cell(r, c):
-                self.grid[r][c] = CellType.TRAP
-                self.traps.add((r, c))
-        
-        # Set arena entry point (on the western edge to ensure accessibility)
+
+    def _set_arena_entry(self):
+        """Set single maze-to-arena entry cell."""
         self.arena_entry = (3, 1)
         self.grid[3][1] = CellType.ENTRY
+
+    def _get_entry_neighbors(self) -> Set[Tuple[int, int]]:
+        """Get all cells adjacent to the arena entry (must always be walkable)."""
+        entry_r, entry_c = self.arena_entry
+        neighbors = set()
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = entry_r + dr, entry_c + dc
+            if self.is_valid_cell(nr, nc) and self.is_maze_cell(nr, nc):
+                neighbors.add((nr, nc))
+        return neighbors
+
+    def _place_random_walls(self, wall_count: int = 8):
+        """Randomly place walls only in maze cells, never in arena/entry/entry neighbors."""
+        entry_neighbors = self._get_entry_neighbors()
+        candidates = []
+        for r in range(self.size):
+            for c in range(self.size):
+                if not self.is_maze_cell(r, c):
+                    continue
+                if (r, c) == self.arena_entry:
+                    continue
+                if (r, c) in entry_neighbors:
+                    continue
+                candidates.append((r, c))
+
+        for r, c in random.sample(candidates, k=min(wall_count, len(candidates))):
+            self.grid[r][c] = CellType.WALL
+
+    def place_traps(self, protected_cells: Set[Tuple[int, int]], trap_count: int = 4):
+        """
+        Place traps after path validation.
+        Protected cells are never replaced, so validated routes remain trap-free.
+        """
+        self.traps.clear()
+
+        candidates = []
+        for r in range(self.size):
+            for c in range(self.size):
+                pos = (r, c)
+                if not self.is_maze_cell(r, c):
+                    continue
+                if pos == self.arena_entry or pos in protected_cells:
+                    continue
+                if self.grid[r][c] == CellType.PATH:
+                    candidates.append(pos)
+
+        for r, c in random.sample(candidates, k=min(trap_count, len(candidates))):
+            self.grid[r][c] = CellType.TRAP
+            self.traps.add((r, c))
+
+    def find_path_bfs(self, start: Tuple[int, int], goal: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Validate reachability with BFS and return one shortest path."""
+        if start == goal:
+            return [start]
+
+        queue = [start]
+        came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {start: None}
+
+        while queue:
+            current = queue.pop(0)
+            if current == goal:
+                break
+
+            for neighbor in self.get_neighbors(current[0], current[1], maze_phase=True):
+                if neighbor in came_from:
+                    continue
+                came_from[neighbor] = current
+                queue.append(neighbor)
+
+        if goal not in came_from:
+            return []
+
+        path = []
+        cur = goal
+        while cur is not None:
+            path.append(cur)
+            cur = came_from[cur]
+        path.reverse()
+        return path
+
+    def validate_paths_to_entry(
+        self, spawns: List[Tuple[int, int]]
+    ) -> Tuple[bool, Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+        """Ensure each spawn has a valid route to arena entry."""
+        paths: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+        for spawn in spawns:
+            path = self.find_path_bfs(spawn, self.arena_entry)
+            if not path:
+                return False, {}
+            paths[spawn] = path
+        return True, paths
     
     def is_maze_cell(self, row: int, col: int) -> bool:
         """Check if cell is part of the maze (not arena)"""
@@ -250,17 +337,15 @@ class Arena(Grid):
         super().__init__(3)  # Arena is 3×3
         self.items: Dict[Tuple[int, int], ItemType] = {}
         self.item_usage: Dict[Tuple[int, int], Set[str]] = {}  # Track which agents used each item
+        self.powerup_spawned = False
+        self.powerup_taken = False
+        self.health_spawned = False
+        self.health_taken = False
         self._place_items()
     
     def _place_items(self):
-        """Randomly place MedKits in the arena"""
-        # Place 1-2 MedKits
-        medkit_positions = random.sample([(0, 0), (0, 2), (2, 0), (2, 2)], k=2)
-        for pos in medkit_positions:
-            self.items[pos] = ItemType.MEDKIT
-            self.item_usage[pos] = set()  # Track usage
-        
-        # PowerUp is NOT placed initially - it spawns when an agent reaches 50 HP or less
+        """No initial items. Items are spawned after half-HP trigger in combat."""
+        return
     
     def can_pickup_item(self, row: int, col: int, agent_name: str) -> bool:
         """Check if agent can pick up item at position"""
@@ -271,7 +356,7 @@ class Arena(Grid):
         return agent_name not in self.item_usage.get(pos, set())
     
     def get_item(self, row: int, col: int, agent_name: str) -> Optional[ItemType]:
-        """Get item at position and track usage. Remove item after both agents used it."""
+        """Get item at position and track usage. Special items are one-time pickups."""
         pos = (row, col)
         if pos not in self.items:
             return None
@@ -284,15 +369,15 @@ class Arena(Grid):
         self.item_usage[pos].add(agent_name)
         item = self.items[pos]
         
-        # PowerUp is single-use: remove immediately after first pickup
+        # PowerUp and MedKit are single-use: remove immediately after first pickup
         if item == ItemType.POWERUP:
             del self.items[pos]
             del self.item_usage[pos]
-            self.powerup_used = True
-        # MedKits can be used by both agents: remove after both used it
-        elif len(self.item_usage[pos]) >= 2:
+            self.powerup_taken = True
+        elif item == ItemType.MEDKIT:
             del self.items[pos]
             del self.item_usage[pos]
+            self.health_taken = True
         
         return item
     
@@ -300,16 +385,50 @@ class Arena(Grid):
         """Check if position has an item"""
         return (row, col) in self.items
     
-    def spawn_powerup(self):
-        """Spawn PowerUp in center of arena if not already spawned"""
-        if not self.powerup_spawned and not self.powerup_used:
-            center_pos = (1, 1)
-            # Only spawn if center is empty
-            if center_pos not in self.items:
-                self.items[center_pos] = ItemType.POWERUP
-                self.item_usage[center_pos] = set()
-                self.powerup_spawned = True
-                return True
+    def spawn_powerup(self, occupied_global_positions: Set[Tuple[int, int]]) -> bool:
+        """Spawn a single power-up once in a random empty arena cell."""
+        if self.powerup_spawned:
+            return False
+
+        candidates = []
+        for r in range(3):
+            for c in range(3):
+                global_pos = (r + ARENA_START, c + ARENA_START)
+                if global_pos in occupied_global_positions:
+                    continue
+                if (r, c) in self.items:
+                    continue
+                candidates.append((r, c))
+
+        if candidates:
+            pos = random.choice(candidates)
+            self.items[pos] = ItemType.POWERUP
+            self.item_usage[pos] = set()
+            self.powerup_spawned = True
+            return True
+        return False
+
+    def spawn_health_pack(self, occupied_global_positions: Set[Tuple[int, int]]) -> bool:
+        """Spawn a single health pickup once in a random empty arena cell."""
+        if self.health_spawned:
+            return False
+
+        candidates = []
+        for r in range(3):
+            for c in range(3):
+                global_pos = (r + ARENA_START, c + ARENA_START)
+                if global_pos in occupied_global_positions:
+                    continue
+                if (r, c) in self.items:
+                    continue
+                candidates.append((r, c))
+
+        if candidates:
+            pos = random.choice(candidates)
+            self.items[pos] = ItemType.MEDKIT
+            self.item_usage[pos] = set()
+            self.health_spawned = True
+            return True
         return False
     
     def convert_to_arena_coords(self, global_pos: Tuple[int, int]) -> Tuple[int, int]:
@@ -498,10 +617,13 @@ class Agent:
         self.is_defending = False
         self.has_powerup = False
         self.last_action = None  # Track last action for restrictions
+        self.logic_burst_charge = 0
+        self.elemental_beam_used = False
         
     def move(self, new_position: Tuple[int, int]):
         """Move agent to new position"""
         self.position = new_position
+        self.last_action = Action.MOVE
     
     def take_damage(self, damage: int) -> int:
         """Apply damage to agent, returns actual damage taken"""
@@ -518,23 +640,43 @@ class Agent:
         """Enter defensive stance"""
         self.is_defending = True
         self.last_action = Action.DEFEND
-    
-    def attack(self, target: 'Agent') -> int:
-        """Perform regular attack"""
-        damage = ATTACK_DAMAGE
+
+    def pulse_strike(self, target: 'Agent') -> int:
+        """Perform pulse strike attack"""
+        damage = PULSE_STRIKE_DAMAGE
+        if self.has_powerup:
+            damage = int(damage * 1.5)
+            self.has_powerup = False
         actual_damage = target.take_damage(damage)
-        self.last_action = Action.ATTACK
+        self.last_action = Action.PULSE_STRIKE
         return actual_damage
-    
-    def power_attack(self, target: 'Agent') -> int:
-        """Perform power attack using powerup"""
-        if not self.has_powerup:
+
+    def logic_burst(self, target: 'Agent') -> int:
+        """Perform logic burst attack"""
+        if self.logic_burst_charge < 3:
             return 0
         
-        damage = POWER_ATTACK_DAMAGE
+        damage = LOGIC_BURST_DAMAGE
+        if self.has_powerup:
+            damage = int(damage * 1.5)
+            self.has_powerup = False
         actual_damage = target.take_damage(damage)
-        self.has_powerup = False  # Consume powerup
-        self.last_action = Action.POWER_ATTACK
+        self.logic_burst_charge = 0
+        self.last_action = Action.LOGIC_BURST
+        return actual_damage
+
+    def elemental_beam(self, target: 'Agent') -> int:
+        """Perform elemental beam attack"""
+        if self.elemental_beam_used:
+            return 0
+        
+        damage = ELEMENTAL_BEAM_DAMAGE
+        if self.has_powerup:
+            damage = int(damage * 1.5)
+            self.has_powerup = False
+        actual_damage = target.take_damage(damage)
+        self.elemental_beam_used = True
+        self.last_action = Action.ELEMENTAL_BEAM
         return actual_damage
     
     def pickup_item(self, item: ItemType):
@@ -560,12 +702,20 @@ class Agent:
     
     def can_perform_action(self, action: Action) -> bool:
         """Check if action can be performed (respects action restrictions)"""
-        # Cannot repeat Move, Defend, or Power Attack consecutively
         if self.last_action is None:
             return True
         
-        if action in [Action.MOVE, Action.DEFEND, Action.POWER_ATTACK]:
-            return self.last_action != action
+        if action == Action.MOVE and self.last_action == Action.MOVE:
+            return False
+        
+        if action == Action.DEFEND and self.last_action == Action.DEFEND:
+            return False
+
+        if action == Action.LOGIC_BURST and self.logic_burst_charge < 3:
+            return False
+
+        if action == Action.ELEMENTAL_BEAM and self.elemental_beam_used:
+            return False
         
         return True
 
@@ -583,23 +733,25 @@ class AegisAgent(Agent):
         self.pathfinder = None  # Will be set by game controller
         self.minimax_depth = 2  # Depth for minimax search
     
-    def decide_maze_move(self, maze: Maze, opponent: 'Agent') -> Tuple[int, int]:
-        """Decide next move in maze phase using A* with trap avoidance"""
-        # Find path to arena entry using A*
+    def decide_maze_move(self, maze: Maze) -> Tuple[int, int]:
+        """Decide next move in maze phase using A* with trap avoidance.
+        Each bot navigates its own private maze copy, so no opponent blocking needed."""
         entry = maze.arena_entry
-        # Don't block opponent if they're already in the arena
-        blocked = None if opponent.in_arena else opponent.position
         path = self.pathfinder.find_path(
-            self.position, 
+            self.position,
             entry,
-            avoid_traps=True,  # Strategically avoid traps
-            blocked_pos=blocked
+            avoid_traps=True,
         )
-        
+
         if len(path) > 1:
             return path[1]  # Return next step
-        
-        return self.position  # Stay if no valid path
+
+        # Fallback: Greedy move toward entry if no A* path found
+        neighbors = maze.get_neighbors(self.position[0], self.position[1], maze_phase=True)
+        if neighbors:
+            return min(neighbors, key=lambda n: abs(n[0] - entry[0]) + abs(n[1] - entry[1]))
+
+        return self.position  # Stay if truly no valid moves
     
     def decide_combat_action(self, arena: Arena, opponent: 'Agent', 
                            maze: Maze) -> Tuple[Action, Optional[Tuple[int, int]]]:
@@ -619,7 +771,6 @@ class AegisAgent(Agent):
             value = self._minimax_evaluate(action, move, opponent, arena, maze,
                                          depth=self.minimax_depth, alpha=float('-inf'),
                                          beta=float('inf'), maximizing=False)
-            print(f"      [Minimax] {action.value}: value = {value:.1f}")
             
             if value > best_value:
                 best_value = value
@@ -633,21 +784,25 @@ class AegisAgent(Agent):
         """Get all valid actions in current combat state"""
         actions = []
         
-        # Move action (if can perform and didn't move last turn)
+        # Move action
         if self.can_perform_action(Action.MOVE):
             for neighbor in maze.get_neighbors(self.position[0], self.position[1]):
                 if neighbor != opponent.position and maze.is_arena_cell(neighbor[0], neighbor[1]):
                     actions.append((Action.MOVE, neighbor))
         
-        # Attack if adjacent
-        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.ATTACK):
-            actions.append((Action.ATTACK, None))
+        # Pulse Strike
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.PULSE_STRIKE):
+            actions.append((Action.PULSE_STRIKE, None))
         
-        # Power attack if have powerup and adjacent
-        if self.has_powerup and self.is_adjacent(opponent.position) and self.can_perform_action(Action.POWER_ATTACK):
-            actions.append((Action.POWER_ATTACK, None))
-        
-        # Defend (if can perform)
+        # Logic Burst
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.LOGIC_BURST):
+            actions.append((Action.LOGIC_BURST, None))
+
+        # Elemental Beam
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.ELEMENTAL_BEAM):
+            actions.append((Action.ELEMENTAL_BEAM, None))
+
+        # Defend
         if self.can_perform_action(Action.DEFEND):
             actions.append((Action.DEFEND, None))
         
@@ -661,17 +816,35 @@ class AegisAgent(Agent):
         
         Evaluates game state assuming both players play optimally
         """
+        # Create copies to simulate the action
+        sim_self = deepcopy(self)
+        sim_opponent = deepcopy(opponent)
+
+        # Simulate the action
+        if action == Action.MOVE:
+            sim_self.move(move)
+        elif action == Action.PULSE_STRIKE:
+            sim_self.pulse_strike(sim_opponent)
+        elif action == Action.LOGIC_BURST:
+            sim_self.logic_burst(sim_opponent)
+        elif action == Action.ELEMENTAL_BEAM:
+            sim_self.elemental_beam(sim_opponent)
+        elif action == Action.DEFEND:
+            sim_self.defend()
+
         # Base case: evaluate current state
-        if depth == 0:
-            return self._evaluate_combat_state(opponent)
+        if depth == 0 or not sim_self.is_alive() or not sim_opponent.is_alive():
+            return sim_self._evaluate_combat_state(sim_opponent)
         
         if maximizing:
             max_eval = float('-inf')
-            actions = self._get_possible_combat_actions(arena, opponent, maze)
+            actions = sim_self._get_possible_combat_actions(arena, sim_opponent, maze)
+            
+            if not actions:
+                return sim_self._evaluate_combat_state(sim_opponent)
             
             for act, mv in actions:
-                # Simulate action and evaluate
-                eval_score = self._evaluate_combat_state(opponent)
+                eval_score = sim_self._minimax_evaluate(act, mv, sim_opponent, arena, maze, depth - 1, alpha, beta, False)
                 max_eval = max(max_eval, eval_score)
                 alpha = max(alpha, eval_score)
                 
@@ -680,40 +853,81 @@ class AegisAgent(Agent):
             
             return max_eval
         else:
-            # Opponent's turn (minimizing for us)
+            # Opponent's turn - just evaluate their best greedy move
             min_eval = float('inf')
-            eval_score = self._evaluate_combat_state(opponent)
-            min_eval = min(min_eval, eval_score)
-            beta = min(beta, eval_score)
+            
+            # Opponent attempts to get the best state for themselves
+            opponent_actions = sim_opponent._get_possible_combat_actions(arena, sim_self, maze)
+            
+            if not opponent_actions:
+                return sim_self._evaluate_combat_state(sim_opponent)
+
+            for act, mv in opponent_actions:
+                # Simulate opponent's action
+                test_self = deepcopy(sim_self)
+                test_opponent = deepcopy(sim_opponent)
+                
+                if act == Action.MOVE:
+                    test_opponent.move(mv)
+                elif act == Action.PULSE_STRIKE:
+                    test_opponent.pulse_strike(test_self)
+                elif act == Action.LOGIC_BURST:
+                    test_opponent.logic_burst(test_self)
+                elif act == Action.ELEMENTAL_BEAM:
+                    test_opponent.elemental_beam(test_self)
+                elif act == Action.DEFEND:
+                    test_opponent.defend()
+                
+                # Evaluate the resulting state from our perspective
+                eval_score = test_self._evaluate_combat_state(test_opponent)
+                min_eval = min(min_eval, eval_score)
+                beta = min(beta, eval_score)
+                if beta <= alpha:
+                    break
             
             return min_eval
-    
+
     def _evaluate_combat_state(self, opponent: 'Agent') -> float:
         """
         Heuristic evaluation function for combat state
         
         Factors:
         - HP difference (most important)
-        - Distance to opponent (prefer being adjacent for attacks)
-        - Defensive state
-        - PowerUp advantage
+        - Distance to opponent (heavily prefer being adjacent for attacks)
+        - Charge readiness
+        - Elemental Beam availability
         """
+        if not self.is_alive():
+            return float('-inf')
+        if not opponent.is_alive():
+            return float('inf')
+
         # HP difference (heavily weighted)
         hp_diff = self.hp - opponent.hp
         hp_score = hp_diff * 3.0
         
-        # Distance to opponent (negative = prefer closer)
+        # Distance to opponent (HEAVILY penalize if not adjacent)
         distance = abs(self.position[0] - opponent.position[0]) + \
                   abs(self.position[1] - opponent.position[1])
-        distance_score = -distance * 2.0
         
-        # Defensive stance bonus
-        defense_score = 5.0 if self.is_defending else 0
+        # Much higher penalty for being far away (but still adjacent = distance 1)
+        if distance == 0:
+            distance_score = 100.0  # Same spot (shouldn't happen but huge bonus)
+        elif distance == 1:
+            distance_score = 50.0  # Adjacent - HUGE bonus for attack opportunity
+        else:
+            distance_score = -distance * 5.0  # Much higher penalty for being distant
         
-        # PowerUp advantage
-        powerup_score = 10.0 if self.has_powerup else 0
+        # Logic Burst ready
+        logic_burst_score = 10.0 if self.logic_burst_charge == 3 else self.logic_burst_charge * 2.0
+
+        # Elemental Beam availability (only valuable if adjacent!)
+        elemental_beam_score = 25.0 if (not self.elemental_beam_used and distance == 1) else (5.0 if not self.elemental_beam_used else 0)
         
-        total = hp_score + distance_score + defense_score + powerup_score
+        # Add some randomness to make the game less predictable
+        random_factor = random.uniform(-3, 3)
+
+        total = hp_score + distance_score + logic_burst_score + elemental_beam_score + random_factor
         return total
 
 
@@ -729,22 +943,24 @@ class VeloAgent(Agent):
         super().__init__("VELO", "V", position, "Red")
         self.pathfinder = None  # Will be set by game controller (UCS)
     
-    def decide_maze_move(self, maze: Maze, opponent: 'Agent') -> Tuple[int, int]:
-        """Decide next move in maze using Uniform Cost Search (aggressive shortest path)"""
-        # Find shortest path to arena entry (may go through traps)
+    def decide_maze_move(self, maze: Maze) -> Tuple[int, int]:
+        """Decide next move in maze using Uniform Cost Search (aggressive shortest path).
+        Each bot navigates its own private maze copy, so no opponent blocking needed."""
         entry = maze.arena_entry
-        # Don't block opponent if they're already in the arena
-        blocked = None if opponent.in_arena else opponent.position
         path = self.pathfinder.find_path(
             self.position,
             entry,
-            blocked_pos=blocked
         )
-        
+
         if len(path) > 1:
             return path[1]  # Return next step
-        
-        return self.position  # Stay if no valid path
+
+        # Fallback: Greedy move toward entry if no UCS path found
+        neighbors = maze.get_neighbors(self.position[0], self.position[1], maze_phase=True)
+        if neighbors:
+            return min(neighbors, key=lambda n: abs(n[0] - entry[0]) + abs(n[1] - entry[1]))
+
+        return self.position  # Stay if truly no valid moves
     
     def decide_combat_action(self, arena: Arena, opponent: 'Agent',
                            maze: Maze) -> Tuple[Action, Optional[Tuple[int, int]]]:
@@ -752,52 +968,45 @@ class VeloAgent(Agent):
         Decide combat action using Greedy Heuristic Strategy
         
         Greedy strategy prioritizes:
-        1. Immediate damage when possible
-        2. Health advantage exploitation  
-        3. Opportunistic movement
-        4. Defensive tactics when losing
+        1. Finishing blow with any attack.
+        2. Using powerful attacks when available.
+        3. Basic attacks if adjacent.
+        4. Defensive moves when at a disadvantage.
+        5. Positioning.
         """
         is_adjacent = self.is_adjacent(opponent.position)
-        hp_advantage = self.hp > opponent.hp
-        low_hp = self.hp < 35
-        critical_hp = self.hp < 20
         
-        print(f"      [Greedy] Adjacent: {is_adjacent}, HP Adv: {hp_advantage}, Low HP: {low_hp}")
-        
-        # Critical HP and not adjacent: must defend
-        if critical_hp and not is_adjacent:
-            if self.can_perform_action(Action.DEFEND):
+        # 1. Elemental Beam: High priority, one-time use
+        if self.can_perform_action(Action.ELEMENTAL_BEAM) and is_adjacent:
+            # Use if it's a finishing move or opponent is high on health
+            if opponent.hp <= ELEMENTAL_BEAM_DAMAGE or opponent.hp > 60:
+                return Action.ELEMENTAL_BEAM, None
+
+        # 2. Logic Burst: Use when charged
+        if self.can_perform_action(Action.LOGIC_BURST) and is_adjacent:
+            return Action.LOGIC_BURST, None
+
+        # 3. Pulse Strike: Reliable damage
+        if self.can_perform_action(Action.PULSE_STRIKE) and is_adjacent:
+            return Action.PULSE_STRIKE, None
+
+        # 4. Defend: If low on health or opponent is about to use a strong attack
+        if self.can_perform_action(Action.DEFEND):
+            if self.hp < 40 or (opponent.logic_burst_charge >= 2 and is_adjacent):
                 return Action.DEFEND, None
-        
-        # Have power attack and adjacent and can use it: use it aggressively!
-        if self.has_powerup and is_adjacent and self.can_perform_action(Action.POWER_ATTACK):
-            print(f"      [Greedy] Choosing POWER ATTACK!")
-            return Action.POWER_ATTACK, None
-        
-        # Adjacent and have HP advantage: attack aggressively
-        if is_adjacent and hp_advantage and self.can_perform_action(Action.ATTACK):
-            return Action.ATTACK, None
-        
-        # Adjacent but low HP: defend
-        if is_adjacent and low_hp and self.can_perform_action(Action.DEFEND):
-            return Action.DEFEND, None
-        
-        # Adjacent: default to attack
-        if is_adjacent and self.can_perform_action(Action.ATTACK):
-            return Action.ATTACK, None
-        
-        # Not adjacent: try to move closer (if can move)
+
+        # 5. Move: If not adjacent, get closer. If adjacent and need to reposition, move.
         if self.can_perform_action(Action.MOVE):
             best_move = self._find_best_move_towards(opponent.position, arena, maze)
             if best_move and best_move != self.position:
                 return Action.MOVE, best_move
-        
-        # Default: defend if possible
+
+        # 6. Default action if nothing else is suitable
         if self.can_perform_action(Action.DEFEND):
             return Action.DEFEND, None
         
-        # Last resort: attack even if not adjacent (will fail but is only option)
-        return Action.ATTACK, None
+        # Last resort
+        return Action.PULSE_STRIKE, None
     
     def _find_best_move_towards(self, target: Tuple[int, int], arena: Arena,
                                maze: Maze) -> Optional[Tuple[int, int]]:
@@ -813,6 +1022,35 @@ class VeloAgent(Agent):
                     best_move = neighbor
         
         return best_move
+    
+    def _get_possible_combat_actions(self, arena: Arena, opponent: 'Agent',
+                                    maze: Maze) -> List[Tuple[Action, Optional[Tuple[int, int]]]]:
+        """Get all valid actions in current combat state"""
+        actions = []
+        
+        # Move action
+        if self.can_perform_action(Action.MOVE):
+            for neighbor in maze.get_neighbors(self.position[0], self.position[1]):
+                if neighbor != opponent.position and maze.is_arena_cell(neighbor[0], neighbor[1]):
+                    actions.append((Action.MOVE, neighbor))
+        
+        # Pulse Strike
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.PULSE_STRIKE):
+            actions.append((Action.PULSE_STRIKE, None))
+        
+        # Logic Burst
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.LOGIC_BURST):
+            actions.append((Action.LOGIC_BURST, None))
+
+        # Elemental Beam
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.ELEMENTAL_BEAM):
+            actions.append((Action.ELEMENTAL_BEAM, None))
+
+        # Defend
+        if self.can_perform_action(Action.DEFEND):
+            actions.append((Action.DEFEND, None))
+        
+        return actions
 
 
 # =============================================================================
@@ -823,12 +1061,82 @@ class GameController:
     """Main game controller for Neuron Bot Wars"""
     
     def __init__(self):
-        self.maze = Maze()
-        self.arena = None  # Will be created when entering combat phase
+        self.maze = Maze()       # Shared layout reference (used for display)
+        self.aegis_maze = None   # AEGIS's private maze copy
+        self.velo_maze = None    # VELO's private maze copy
+        self.arena = None        # Created when entering combat phase
         self.aegis = None
         self.velo = None
         self.turn_count = 0
+        self.maze_turn_count = 0
         self.phase = 1  # 1 = Maze Navigation, 2 = Combat
+        self.MAX_COMBAT_TURNS = 1000  # Prevent infinite loops
+
+    def _build_valid_maze_and_spawns(self) -> Tuple[Maze, Tuple[int, int], Tuple[int, int], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+        """
+        Generate maze repeatedly until both spawn points have valid paths to entry.
+        Also enforces spawn distance, trap-safe routes, and entry accessibility.
+        """
+        max_attempts = 200
+        for _ in range(max_attempts):
+            candidate_maze = Maze()
+            valid_cells = candidate_maze.get_valid_spawn_cells(min_distance_from_entry=MIN_SPAWN_DISTANCE)
+            if len(valid_cells) < 2:
+                continue
+
+            # Enforce equal Manhattan distance from arena entry for both agents.
+            entry = candidate_maze.arena_entry
+            distance_groups: Dict[int, List[Tuple[int, int]]] = {}
+            for cell in valid_cells:
+                dist = abs(cell[0] - entry[0]) + abs(cell[1] - entry[1])
+                distance_groups.setdefault(dist, []).append(cell)
+
+            same_distance_candidates = [cells for cells in distance_groups.values() if len(cells) >= 2]
+            if not same_distance_candidates:
+                continue
+
+            chosen_group = random.choice(same_distance_candidates)
+            spawns = random.sample(chosen_group, 2)
+            valid, paths = candidate_maze.validate_paths_to_entry(spawns)
+            if not valid:
+                continue
+
+            # Verify entry is accessible (has at least one walkable neighbor).
+            entry_neighbors = candidate_maze._get_entry_neighbors()
+            if not entry_neighbors:
+                continue
+
+            # Keep guaranteed routes and spawn cells trap-free.
+            protected_cells: Set[Tuple[int, int]] = set(spawns)
+            protected_cells.add(candidate_maze.arena_entry)
+            protected_cells.update(entry_neighbors)  # Protect entry neighbors
+            for path in paths.values():
+                protected_cells.update(path)
+
+            candidate_maze.place_traps(protected_cells=protected_cells, trap_count=4)
+            return candidate_maze, spawns[0], spawns[1], paths
+
+        raise RuntimeError("Failed to generate a valid maze after multiple attempts.")
+
+    def _reset_maze_phase_due_to_turn_limit(self):
+        """Safety fallback: regenerate maze when navigation exceeds turn cap."""
+        print("\n[WARNING] MAX MAZE TURN LIMIT REACHED. REGENERATING MAZE TO PREVENT DEADLOCK...")
+
+        self.maze, aegis_spawn, velo_spawn, _ = self._build_valid_maze_and_spawns()
+        self.aegis_maze = self.maze
+        self.velo_maze = deepcopy(self.maze)
+        self.aegis.position = aegis_spawn
+        self.velo.position = velo_spawn
+        self.aegis.in_arena = False
+        self.velo.in_arena = False
+        self.maze_turn_count = 0
+
+        self.aegis.pathfinder = AStarPathfinder(self.aegis_maze)
+        self.velo.pathfinder = UniformCostSearch(self.velo_maze)
+
+        print(f"   New AEGIS spawn: {self.aegis.position}")
+        print(f"   New VELO spawn: {self.velo.position}")
+        print(f"   Arena entry remains at: {self.maze.arena_entry}")
     
     def initialize_game(self):
         """Initialize game with agents spawned in maze"""
@@ -836,33 +1144,34 @@ class GameController:
         print(" " * 15 + "NEURON BOT WARS")
         print(" " * 12 + "AI vs AI Simulation")
         print("=" * 60)
-        print("\n🎮 Game Initializing...")
-        print("\n📋 Game Rules:")
+        print("\n[GAME] Initializing...")
+        print("\n[RULES] Game Rules:")
         print("  • Phase 1: Navigate maze to reach arena entry point")
         print("  • Phase 2: Combat in 3×3 arena until one agent wins")
         print("  • Traps deal 10 HP damage")
-        print("  • Attack: 15 damage | Power Attack: 30 damage")
+        print("  • Pulse Strike: 10 damage")
+        print("  • Logic Burst: 20 damage (3 turns to charge)")
+        print("  • Elemental Beam: 30 damage (once per game)")
         print("  • Defend reduces damage by 80%")
         
-        # Spawn agents in valid maze positions (far from entry)
-        valid_cells = self.maze.get_valid_spawn_cells(min_distance_from_entry=4)
-        if len(valid_cells) < 2:
-            valid_cells = self.maze.get_valid_spawn_cells(min_distance_from_entry=2)
+        # Build a maze that guarantees valid paths from both spawns to entry.
+        # Each bot gets its own private deepcopy so they navigate independently.
+        self.maze, aegis_spawn, velo_spawn, _ = self._build_valid_maze_and_spawns()
+        self.aegis_maze = self.maze
+        self.velo_maze = deepcopy(self.maze)
+
+        self.aegis = AegisAgent(aegis_spawn)
+        self.aegis.pathfinder = AStarPathfinder(self.aegis_maze)
+
+        self.velo = VeloAgent(velo_spawn)
+        self.velo.pathfinder = UniformCostSearch(self.velo_maze)
         
-        spawn_positions = random.sample(valid_cells, 2)
-        
-        self.aegis = AegisAgent(spawn_positions[0])
-        self.aegis.pathfinder = AStarPathfinder(self.maze)
-        
-        self.velo = VeloAgent(spawn_positions[1])
-        self.velo.pathfinder = UniformCostSearch(self.maze)
-        
-        print(f"\n🤖 AEGIS ({self.aegis.color}) spawned at: {self.aegis.position}")
+        print(f"\n[BOT] AEGIS ({self.aegis.color}) spawned at: {self.aegis.position}")
         print(f"   Strategy: A* pathfinding (avoids traps) + Minimax combat")
-        print(f"\n🤖 VELO ({self.velo.color}) spawned at: {self.velo.position}")
+        print(f"\n[BOT] VELO ({self.velo.color}) spawned at: {self.velo.position}")
         print(f"   Strategy: Uniform Cost Search (risky) + Greedy combat")
         
-        print(f"\n🎯 Arena Entry Point: {self.maze.arena_entry}")
+        print(f"\n[TARGET] Arena Entry Point: {self.maze.arena_entry}")
         
         print("\n" + "-" * 60)
         print("PHASE 1: MAZE NAVIGATION")
@@ -873,85 +1182,165 @@ class GameController:
         self.maze.display(self.aegis.position, self.velo.position, phase=1,
                          agent1_in_arena=self.aegis.in_arena, agent2_in_arena=self.velo.in_arena)
     
+    def _wait_for_enter(self, message: str = "Press Enter to continue..."):
+        """Pause execution until the user presses Enter."""
+        try:
+            input(f"\n[PAUSE] {message}")
+        except EOFError:
+            print("\n[PAUSE] Input unavailable. Continuing automatically...")
+
+    def _ask_continue_after_match(self, current_match: int, max_matches: int) -> bool:
+        """Ask whether to continue to the next match or end the series early."""
+        while True:
+            try:
+                choice = input(
+                    f"\n[MATCH MENU] Match {current_match} of {max_matches} complete. "
+                    "Press Enter to play the next match or type 'end' to stop the series: "
+                ).strip().lower()
+            except EOFError:
+                print("\n[MATCH MENU] Input unavailable. Ending the series.")
+                return False
+
+            if choice == "":
+                return True
+            if choice in {"end", "e", "stop", "quit", "q"}:
+                return False
+
+            print("[ERROR] Invalid choice. Press Enter to continue or type 'end' to stop.")
+
     def run(self):
-        """Main game loop"""
+        """Main game loop for up to 5 matches with optional early stop after each match."""
+        aegis_wins = 0
+        velo_wins = 0
+        draws = 0
+        max_matches = 5
+
+        for i in range(max_matches):
+            print(f"\n\n{'#' * 60}")
+            print(f"MATCH {i + 1} of {max_matches}")
+            print(f"{'#' * 60}")
+            self.phase = 1
+            self.turn_count = 0
+            self.maze_turn_count = 0
+
+            winner = self.run_match()
+
+            if winner == "AEGIS":
+                aegis_wins += 1
+            elif winner == "VELO":
+                velo_wins += 1
+            elif winner == "DRAW":
+                draws += 1
+
+            matches_played = i + 1
+
+            if matches_played < max_matches:
+                should_continue = self._ask_continue_after_match(matches_played, max_matches)
+                if not should_continue:
+                    break
+
+        print("\n" + "=" * 60)
+        print(" " * 20 + "FINAL SCORE")
+        print("=" * 60)
+        print(f"Matches played: {matches_played}")
+        print(f"AEGIS: {aegis_wins} wins")
+        print(f"VELO: {velo_wins} wins")
+        print(f"Draws: {draws}")
+        if aegis_wins > velo_wins:
+            print("\n[FINAL] AEGIS is the overall winner!")
+        elif velo_wins > aegis_wins:
+            print("\n[FINAL] VELO is the overall winner!")
+        else:
+            print("\n[FINAL] It's a draw!")
+
+    def run_match(self):
+        """Runs a single match."""
         self.initialize_game()
         
         # Phase 1: Maze Navigation
         while self.phase == 1:
             self._run_maze_turn()
-            input("\n➤ Press Enter to continue...")
-        
+
         # Transition to combat
         self._transition_to_combat()
         
         # Phase 2: Combat
         while self.phase == 2:
+            # Check for combat turn limit
+            if self.turn_count - self.maze_turn_count > self.MAX_COMBAT_TURNS:
+                print(f"\n[TIMEOUT] Match exceeded {self.MAX_COMBAT_TURNS} combat turns. Declaring draw!")
+                print(f"AEGIS HP: {self.aegis.hp}")
+                print(f"VELO HP: {self.velo.hp}")
+                if self.aegis.hp > self.velo.hp:
+                    return self._announce_winner(self.aegis)
+                elif self.velo.hp > self.aegis.hp:
+                    return self._announce_winner(self.velo)
+                else:
+                    print("\n[DRAW] Both agents survived with equal HP!")
+                    self.phase = 3
+                    return "DRAW"
+            
             self._run_combat_turn()
             
             # Check win conditions
             if not self.aegis.is_alive():
-                self._announce_winner(self.velo)
-                break
+                return self._announce_winner(self.velo)
             elif not self.velo.is_alive():
-                self._announce_winner(self.aegis)
-                break
-            
-            input("\n➤ Press Enter to continue...")
-    
+                return self._announce_winner(self.aegis)
+        return None
+
     def _run_maze_turn(self):
-        """Execute one turn of maze navigation"""
+        """Execute one turn of maze navigation.
+        AEGIS and VELO each navigate their own private maze copy so they never block each other."""
         self.turn_count += 1
+        self.maze_turn_count += 1
+
+        if self.maze_turn_count > MAX_MAZE_TURNS:
+            self._reset_maze_phase_due_to_turn_limit()
+
         print(f"\n{'=' * 60}")
         print(f"TURN {self.turn_count} - MAZE PHASE")
         print(f"{'=' * 60}")
-        
-        # AEGIS turn
+
+        # --- AEGIS moves on its own maze copy ---
         if not self.aegis.in_arena:
-            print(f"\n🔵 {self.aegis.name}'s turn:")
+            planned_aegis = self.aegis.decide_maze_move(self.aegis_maze)
+            print(f"\n[BLUE] {self.aegis.name}'s turn:")
             print(f"   Current position: {self.aegis.position}")
-            new_pos = self.aegis.decide_maze_move(self.maze, self.velo)
-            old_pos = self.aegis.position
-            self.aegis.move(new_pos)
-            print(f"   → Moved to {new_pos} (using A* pathfinding)")
-            
-            # Check for trap
-            if self.maze.is_trap(new_pos[0], new_pos[1]):
-                damage = TRAP_DAMAGE
-                self.aegis.take_damage(damage)
-                print(f"   ⚠️  TRAP! {self.aegis.name} takes {damage} HP damage")
+            self.aegis.move(planned_aegis)
+            print(f"   -> Moved to {planned_aegis} (using A* pathfinding)")
+
+            if self.aegis_maze.is_trap(planned_aegis[0], planned_aegis[1]):
+                self.aegis.take_damage(TRAP_DAMAGE)
+                print(f"   [TRAP] {self.aegis.name} takes {TRAP_DAMAGE} HP damage")
                 print(f"   HP: {self.aegis.hp}")
-            
-            # Check if reached entry
-            if new_pos == self.maze.arena_entry:
+
+            if planned_aegis == self.aegis_maze.arena_entry:
                 self.aegis.in_arena = True
-                print(f"   ✅ {self.aegis.name} has reached the ARENA ENTRY!")
-        
-        # VELO turn
+                print(f"   [SUCCESS] {self.aegis.name} has reached the ARENA ENTRY!")
+
+        # --- VELO moves on its own maze copy ---
         if not self.velo.in_arena:
-            print(f"\n🔴 {self.velo.name}'s turn:")
+            planned_velo = self.velo.decide_maze_move(self.velo_maze)
+            print(f"\n[RED] {self.velo.name}'s turn:")
             print(f"   Current position: {self.velo.position}")
-            new_pos = self.velo.decide_maze_move(self.maze, self.aegis)
-            old_pos = self.velo.position
-            self.velo.move(new_pos)
-            print(f"   → Moved to {new_pos} (using Uniform Cost Search)")
-            
-            # Check for trap
-            if self.maze.is_trap(new_pos[0], new_pos[1]):
-                damage = TRAP_DAMAGE
-                self.velo.take_damage(damage)
-                print(f"   ⚠️  TRAP! {self.velo.name} takes {damage} HP damage")
+            self.velo.move(planned_velo)
+            print(f"   -> Moved to {planned_velo} (using Uniform Cost Search)")
+
+            if self.velo_maze.is_trap(planned_velo[0], planned_velo[1]):
+                self.velo.take_damage(TRAP_DAMAGE)
+                print(f"   [TRAP] {self.velo.name} takes {TRAP_DAMAGE} HP damage")
                 print(f"   HP: {self.velo.hp}")
-            
-            # Check if reached entry
-            if new_pos == self.maze.arena_entry:
+
+            if planned_velo == self.velo_maze.arena_entry:
                 self.velo.in_arena = True
-                print(f"   ✅ {self.velo.name} has reached the ARENA ENTRY!")
-        
-        # Display maze
+                print(f"   [SUCCESS] {self.velo.name} has reached the ARENA ENTRY!")
+
+        # Display shared maze layout with both agents' positions
         self.maze.display(self.aegis.position, self.velo.position, phase=1,
                          agent1_in_arena=self.aegis.in_arena, agent2_in_arena=self.velo.in_arena)
-        
+        self._wait_for_enter("Press Enter for the next turn...")
+
         # Check if both entered arena
         if self.aegis.in_arena and self.velo.in_arena:
             self.phase = 2
@@ -975,14 +1364,14 @@ class GameController:
         self.aegis.move(arena_corners[0])
         self.velo.move(arena_corners[1])
         
-        print(f"\n💙 {self.aegis.name} HP: {self.aegis.hp}")
-        print(f"❤️  {self.velo.name} HP: {self.velo.hp}")
+        print(f"\n [HEALTH] {self.aegis.name} HP: {self.aegis.hp}")
+        print(f" [HEALTH] {self.velo.name} HP: {self.velo.hp}")
         
-        print(f"\n📦 Arena Items:")
+        print(f"\n[ITEMS] Arena Items:")
         if self.arena.items:
             for pos, item in self.arena.items.items():
                 global_pos = (pos[0] + ARENA_START, pos[1] + ARENA_START)
-                print(f"   {item.value} at {global_pos}")
+                print(f"   [{item.value}] at {global_pos}")
         else:
             print("   No items in arena")
         
@@ -990,11 +1379,11 @@ class GameController:
         print("PHASE 2: COMBAT")
         print("-" * 60)
         print("Turn-based combat begins!")
-        print("Actions: Move, Attack, Defend, Power Attack, Concede")
-        print("Restriction: Cannot repeat Move, Defend, or Power Attack")
+        print("Actions: Move, Defend, Pulse Strike, Logic Burst, Elemental Beam")
+        print("Restriction: Cannot repeat Move or Defend consecutively")
         
         self.arena.display(self.aegis.position, self.velo.position)
-        input("\n➤ Press Enter to begin combat...")
+        self._wait_for_enter("Press Enter for the next turn...")
     
     def _run_combat_turn(self):
         """Execute one turn of combat"""
@@ -1003,12 +1392,12 @@ class GameController:
         print(f"TURN {self.turn_count} - COMBAT PHASE")
         print(f"{'=' * 60}")
         
-        # Check if PowerUp should spawn (when any agent reaches 50 HP or less)
-        if not self.arena.powerup_spawned and not self.arena.powerup_used:
-            if self.aegis.hp <= 50 or self.velo.hp <= 50:
-                if self.arena.spawn_powerup():
-                    print("\n⚡ POWERUP SPAWNED in the center! (First to grab gets the boost)")
-        
+        # Increment logic burst charge
+        if self.aegis.logic_burst_charge < 3:
+            self.aegis.logic_burst_charge += 1
+        if self.velo.logic_burst_charge < 3:
+            self.velo.logic_burst_charge += 1
+
         # Display status
         aegis_status = []
         if self.aegis.is_defending:
@@ -1017,6 +1406,7 @@ class GameController:
             aegis_status.append('HAS POWERUP')
         if self.aegis.last_action:
             aegis_status.append(f'Last: {self.aegis.last_action.value}')
+        aegis_status.append(f'Logic Burst: {self.aegis.logic_burst_charge}/3')
         
         velo_status = []
         if self.velo.is_defending:
@@ -1025,99 +1415,122 @@ class GameController:
             velo_status.append('HAS POWERUP')
         if self.velo.last_action:
             velo_status.append(f'Last: {self.velo.last_action.value}')
-        
-        print(f"\n💙 AEGIS HP: {self.aegis.hp}/100 {('[' + ', '.join(aegis_status) + ']') if aegis_status else ''}")
-        print(f"❤️  VELO HP: {self.velo.hp}/100 {('[' + ', '.join(velo_status) + ']') if velo_status else ''}")
+        velo_status.append(f'Logic Burst: {self.velo.logic_burst_charge}/3')
+
+        print(f"\n [AEGIS] HP: {self.aegis.hp}/100 {('[' + ', '.join(aegis_status) + ']') if aegis_status else ''}")
+        print(f" [VELO] HP: {self.velo.hp}/100 {('[' + ', '.join(velo_status) + ']') if velo_status else ''}")
         
         # AEGIS turn
-        print(f"\n🔵 {self.aegis.name}'s turn (Minimax AI):")
-        print(f"   Position: {self.aegis.position}")
-        action, move = self.aegis.decide_combat_action(self.arena, self.velo, self.maze)
-        self._execute_combat_action(self.aegis, self.velo, action, move)
-        
+        if self.aegis.is_alive():
+            print(f"\n[AEGIS] Turn (Minimax AI):")
+            print(f"   Position: {self.aegis.position}")
+            action, move = self.aegis.decide_combat_action(self.arena, self.velo, self.maze)
+            self._execute_combat_action(self.aegis, self.velo, action, move)
+            self._check_and_spawn_battle_items()
+
         if not self.velo.is_alive():
             return
-        
+
         # VELO turn
-        print(f"\n🔴 {self.velo.name}'s turn (Greedy AI):")
-        print(f"   Position: {self.velo.position}")
-        action, move = self.velo.decide_combat_action(self.arena, self.aegis, self.maze)
-        self._execute_combat_action(self.velo, self.aegis, action, move)
-        
-        # Display arena
+        if self.velo.is_alive():
+            print(f"\n[VELO] Turn (Greedy AI):")
+            print(f"   Position: {self.velo.position}")
+            action, move = self.velo.decide_combat_action(self.arena, self.aegis, self.maze)
+            self._execute_combat_action(self.velo, self.aegis, action, move)
+            self._check_and_spawn_battle_items()
+
         self.arena.display(self.aegis.position, self.velo.position)
-    
-    def _execute_combat_action(self, attacker: Agent, defender: Agent,
-                               action: Action, move: Optional[Tuple[int, int]]):
-        """Execute a combat action"""
-        print(f"   Action: {action.value.upper()}")
-        
+        self._wait_for_enter("Press Enter for the next turn...")
+
+    def _execute_combat_action(self, agent: Agent, opponent: Agent, action: Action, move: Optional[Tuple[int, int]]):
+        """Executes a combat action for an agent."""
+        print(f"   Action: {action.value}")
         if action == Action.MOVE:
-            if move:
-                old_pos = attacker.position
-                attacker.move(move)
-                attacker.last_action = Action.MOVE
-                print(f"   → Moved from {old_pos} to {move}")
-                
-                # Check for item pickup
-                arena_coords = self.arena.convert_to_arena_coords(move)
-                if self.arena.can_pickup_item(arena_coords[0], arena_coords[1], attacker.name):
-                    item = self.arena.get_item(arena_coords[0], arena_coords[1], attacker.name)
-                    if item:  # Only if successfully retrieved
-                        attacker.pickup_item(item)
-        
-        elif action == Action.ATTACK:
-            if attacker.is_adjacent(defender.position):
-                actual_damage = attacker.attack(defender)
-                print(f"   → Attacked {defender.name} for {actual_damage} damage!")
-                print(f"      {defender.name} HP: {defender.hp}/100")
-            else:
-                print(f"   → Attack FAILED (not adjacent to {defender.name})")
-                attacker.last_action = Action.ATTACK
-        
-        elif action == Action.POWER_ATTACK:
-            if attacker.has_powerup and attacker.is_adjacent(defender.position):
-                actual_damage = attacker.power_attack(defender)
-                print(f"   → POWER ATTACK on {defender.name} for {actual_damage} damage!")
-                print(f"      {defender.name} HP: {defender.hp}/100")
-            elif not attacker.has_powerup:
-                print(f"   → Power Attack FAILED (no powerup)")
-                attacker.last_action = Action.POWER_ATTACK
-            else:
-                print(f"   → Power Attack FAILED (not adjacent)")
-                attacker.last_action = Action.POWER_ATTACK
-        
+            agent.move(move)
+            print(f"   -> Moved to {move}")
+            # Check for item pickup
+            arena_coords = self.arena.convert_to_arena_coords(move)
+            if self.arena.can_pickup_item(arena_coords[0], arena_coords[1], agent.name):
+                item = self.arena.get_item(arena_coords[0], arena_coords[1], agent.name)
+                if item:
+                    agent.pickup_item(item)
         elif action == Action.DEFEND:
-            attacker.defend()
-            print(f"   → Defending (next incoming damage reduced by 80%)")
+            agent.defend()
+            print(f"   [SHIELD] {agent.name} is defending!")
+        elif action == Action.PULSE_STRIKE:
+            damage = agent.pulse_strike(opponent)
+            print(f"   [PULSE] {agent.name} uses Pulse Strike! Dealt {damage} damage.")
+        elif action == Action.LOGIC_BURST:
+            damage = agent.logic_burst(opponent)
+            if damage > 0:
+                print(f"   [LOGIC] {agent.name} uses Logic Burst! Dealt {damage} damage.")
+            else:
+                print(f"   [LOGIC] Logic Burst not charged!")
+        elif action == Action.ELEMENTAL_BEAM:
+            damage = agent.elemental_beam(opponent)
+            if damage > 0:
+                print(f"   [BEAM] {agent.name} uses Elemental Beam! Dealt {damage} damage.")
+            else:
+                print(f"   [BEAM] Elemental Beam already used!")
         
-        elif action == Action.CONCEDE:
-            print(f"   → {attacker.name} CONCEDES!")
-            attacker.hp = 0
+        agent.last_action = action
+
+    def _check_and_spawn_battle_items(self):
+        """Spawns items if agents are low on health."""
+        occupied = {self.aegis.position, self.velo.position}
+        if self.aegis.hp < 50 or self.velo.hp < 50:
+            if not self.arena.health_spawned:
+                if self.arena.spawn_health_pack(occupied):
+                    print("\n[SPAWN] A MedKit has appeared in the arena!")
+            if not self.arena.powerup_spawned:
+                if self.arena.spawn_powerup(occupied):
+                    print("\n[SPAWN] A Power Up has appeared in the arena!")
+
+    def _announce_winner(self, winner: Agent):
+        """Announces the winner of the game."""
+        print("\n" + "=" * 60)
+        print(" " * 20 + "GAME OVER")
+        print("=" * 60)
+        print(f"\n[WINNER] The winner is {winner.name} ({winner.color})!")
+        print(f"   Remaining HP: {winner.hp}")
+        self.phase = 3 # End of game
+        return winner.name
+
+    def _check_and_spawn_battle_items(self):
+        """
+        Spawn one-time battle items when any agent reaches half HP.
+        
+        Power-up behavior:
+        - Spawns only ONCE when any agent reaches 50 HP or less
+        - Only the first agent to move onto the power-up cell can grab it
+        - Once grabbed, the item is immediately removed (powerup_taken = True)
+        - If second agent later reaches 50 HP, no additional power-up spawns
+        """
+        half_hp = INITIAL_HP // 2
+        if self.aegis.hp > half_hp and self.velo.hp > half_hp:
+            return
+
+        occupied = {self.aegis.position, self.velo.position}
+
+        if not self.arena.powerup_spawned:
+            if self.arena.spawn_powerup(occupied_global_positions=occupied):
+                print("\n[POWER] POWER UP HAS SPAWNED IN THE ARENA! (Grab it before your opponent!)")
+
+        if not self.arena.health_spawned:
+            if self.arena.spawn_health_pack(occupied_global_positions=occupied):
+                print("\n[HEALTH] HEALTH POWER UP HAS SPAWNED IN THE ARENA! (One agent only!)")
+    
     
     def _announce_winner(self, winner: Agent):
-        """Announce the game winner"""
+        """Announces the winner of the game."""
         print("\n" + "=" * 60)
-        print(" " * 22 + "GAME OVER")
+        print(" " * 20 + "GAME OVER")
         print("=" * 60)
-        print(f"\n🏆 {winner.name} WINS! 🏆")
-        print(f"\n📊 Final Statistics:")
-        print(f"   Winner: {winner.name} ({winner.color} Agent)")
-        print(f"   Final HP: {winner.hp}/100")
-        print(f"   Total Turns: {self.turn_count}")
-        
-        loser = self.velo if winner == self.aegis else self.aegis
-        print(f"\n   Defeated: {loser.name}")
-        print(f"   Final HP: {loser.hp}/100")
-        
-        print("\n" + "=" * 60)
-        print("Thank you for watching Neuron Bot Wars!")
-        print("=" * 60 + "\n")
+        print(f"\n[WINNER] The winner is {winner.name} ({winner.color})!")
+        print(f"   Remaining HP: {winner.hp}")
+        self.phase = 3 # End of game
+        return winner.name
 
-
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
 
 def main():
     """Main entry point for Neuron Bot Wars"""
