@@ -39,3 +39,29 @@ class AegisAgent(Agent):
             return min(neighbors, key=lambda n: abs(n[0] - entry[0]) + abs(n[1] - entry[1]))
 
         return self.position  # Stay if truly no valid moves
+    
+    def decide_combat_action(self, arena: Arena, opponent: 'Agent', 
+                           maze: Maze) -> Tuple[Action, Optional[Tuple[int, int]]]:
+        """Decide combat action using Minimax with Alpha-Beta Pruning"""
+        best_action = Action.DEFEND
+        best_move = None
+        best_value = float('-inf')
+        
+        # Get all possible actions
+        possible_actions = self._get_possible_combat_actions(arena, opponent, maze)
+        
+        if not possible_actions:
+            return Action.DEFEND, None
+        
+        # Evaluate each action using minimax
+        for action, move in possible_actions:
+            value = self._minimax_evaluate(action, move, opponent, arena, maze,
+                                         depth=self.minimax_depth, alpha=float('-inf'),
+                                         beta=float('inf'), maximizing=False)
+            
+            if value > best_value:
+                best_value = value
+                best_action = action
+                best_move = move
+        
+        return best_action, best_move
