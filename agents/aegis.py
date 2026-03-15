@@ -180,3 +180,46 @@ class AegisAgent(Agent):
                     break
             
             return min_eval
+
+    def _evaluate_combat_state(self, opponent: 'Agent') -> float:
+        """
+        Heuristic evaluation function for combat state
+        
+        Factors:
+        - HP difference (most important)
+        - Distance to opponent (heavily prefer being adjacent for attacks)
+        - Charge readiness
+        - Elemental Beam availability
+        """
+        if not self.is_alive():
+            return float('-inf')
+        if not opponent.is_alive():
+            return float('inf')
+
+        # HP difference (heavily weighted)
+        hp_diff = self.hp - opponent.hp
+        hp_score = hp_diff * 3.0
+        
+        # Distance to opponent (HEAVILY penalize if not adjacent)
+        distance = abs(self.position[0] - opponent.position[0]) + \
+                  abs(self.position[1] - opponent.position[1])
+        
+        # Much higher penalty for being far away (but still adjacent = distance 1)
+        if distance == 0:
+            distance_score = 100.0  # Same spot (shouldn't happen but huge bonus)
+        elif distance == 1:
+            distance_score = 50.0  # Adjacent - HUGE bonus for attack opportunity
+        else:
+            distance_score = -distance * 5.0  # Much higher penalty for being distant
+        
+        # Logic Burst ready
+        logic_burst_score = 10.0 if self.logic_burst_charge == 3 else self.logic_burst_charge * 2.0
+
+        # Elemental Beam availability (only valuable if adjacent!)
+        elemental_beam_score = 25.0 if (not self.elemental_beam_used and distance == 1) else (5.0 if not self.elemental_beam_used else 0)
+        
+        # Add some randomness to make the game less predictable
+        random_factor = random.uniform(-3, 3)
+
+        total = hp_score + distance_score + logic_burst_score + elemental_beam_score + random_factor
+        return total
