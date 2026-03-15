@@ -97,3 +97,86 @@ class AegisAgent(Agent):
         actions.append((Action.WAIT, None))
         
         return actions
+    
+    def _minimax_evaluate(self, action: Action, move: Optional[Tuple[int, int]],
+                         opponent: 'Agent', arena: Arena, maze: Maze,
+                         depth: int, alpha: float, beta: float, maximizing: bool) -> float:
+        """
+        Minimax with Alpha-Beta Pruning evaluation
+        
+        Evaluates game state assuming both players play optimally
+        """
+        # Create copies to simulate the action
+        sim_self = deepcopy(self)
+        sim_opponent = deepcopy(opponent)
+
+        # Simulate the action
+        if action == Action.MOVE:
+            sim_self.move(move)
+        elif action == Action.PULSE_STRIKE:
+            sim_self.pulse_strike(sim_opponent)
+        elif action == Action.LOGIC_BURST:
+            sim_self.logic_burst(sim_opponent)
+        elif action == Action.ELEMENTAL_BEAM:
+            sim_self.elemental_beam(sim_opponent)
+        elif action == Action.DEFEND:
+            sim_self.defend()
+        elif action == Action.WAIT:
+            sim_self.wait()
+
+        # Base case: evaluate current state
+        if depth == 0 or not sim_self.is_alive() or not sim_opponent.is_alive():
+            return sim_self._evaluate_combat_state(sim_opponent)
+        
+        if maximizing:
+            max_eval = float('-inf')
+            actions = sim_self._get_possible_combat_actions(arena, sim_opponent, maze)
+            
+            if not actions:
+                return sim_self._evaluate_combat_state(sim_opponent)
+            
+            for act, mv in actions:
+                eval_score = sim_self._minimax_evaluate(act, mv, sim_opponent, arena, maze, depth - 1, alpha, beta, False)
+                max_eval = max(max_eval, eval_score)
+                alpha = max(alpha, eval_score)
+                
+                if beta <= alpha:
+                    break  # Alpha-Beta pruning
+            
+            return max_eval
+        else:
+            # Opponent's turn - just evaluate their best greedy move
+            min_eval = float('inf')
+            
+            # Opponent attempts to get the best state for themselves
+            opponent_actions = sim_opponent._get_possible_combat_actions(arena, sim_self, maze)
+            
+            if not opponent_actions:
+                return sim_self._evaluate_combat_state(sim_opponent)
+
+            for act, mv in opponent_actions:
+                # Simulate opponent's action
+                test_self = deepcopy(sim_self)
+                test_opponent = deepcopy(sim_opponent)
+                
+                if act == Action.MOVE:
+                    test_opponent.move(mv)
+                elif act == Action.PULSE_STRIKE:
+                    test_opponent.pulse_strike(test_self)
+                elif act == Action.LOGIC_BURST:
+                    test_opponent.logic_burst(test_self)
+                elif act == Action.ELEMENTAL_BEAM:
+                    test_opponent.elemental_beam(test_self)
+                elif act == Action.DEFEND:
+                    test_opponent.defend()
+                elif act == Action.WAIT:
+                    test_opponent.wait()
+                
+                # Evaluate the resulting state from our perspective
+                eval_score = test_self._evaluate_combat_state(test_opponent)
+                min_eval = min(min_eval, eval_score)
+                beta = min(beta, eval_score)
+                if beta <= alpha:
+                    break
+            
+            return min_eval
