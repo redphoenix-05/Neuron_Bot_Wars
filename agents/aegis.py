@@ -65,3 +65,35 @@ class AegisAgent(Agent):
                 best_move = move
         
         return best_action, best_move
+    
+    def _get_possible_combat_actions(self, arena: Arena, opponent: 'Agent',
+                                    maze: Maze) -> List[Tuple[Action, Optional[Tuple[int, int]]]]:
+        """Get all valid actions in current combat state"""
+        actions = []
+        
+        # Move action
+        if self.can_perform_action(Action.MOVE):
+            for neighbor in maze.get_neighbors(self.position[0], self.position[1]):
+                if neighbor != opponent.position and maze.is_arena_cell(neighbor[0], neighbor[1]):
+                    actions.append((Action.MOVE, neighbor))
+        
+        # Pulse Strike
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.PULSE_STRIKE):
+            actions.append((Action.PULSE_STRIKE, None))
+        
+        # Logic Burst
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.LOGIC_BURST):
+            actions.append((Action.LOGIC_BURST, None))
+
+        # Elemental Beam
+        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.ELEMENTAL_BEAM):
+            actions.append((Action.ELEMENTAL_BEAM, None))
+
+        # Defend
+        if self.can_perform_action(Action.DEFEND):
+            actions.append((Action.DEFEND, None))
+            
+        # Wait is always possible
+        actions.append((Action.WAIT, None))
+        
+        return actions
