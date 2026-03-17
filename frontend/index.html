@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neuro Bot Wars - 3D Visualization</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Three.js library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div class="main-container">
+        <!-- Game viewport -->
+        <div id="game-container" class="game-viewport"></div>
+        
+        <!-- UI Overlay -->
+        <div class="ui-overlay">
+            <!-- Title -->
+            <div class="header">
+                <h1>NEURO BOT WARS</h1>
+                <p>3D Tactical AI Visualizer</p>
+            </div>
+            
+            <!-- Game info -->
+            <div class="game-info">
+                <div class="info-panel">
+                    <div class="phase-display">
+                        <span class="label">PHASE:</span>
+                        <span id="phase-display" class="value">Maze Navigation</span>
+                    </div>
+                    <div class="turn-display">
+                        <span class="label">TURN:</span>
+                        <span id="turn-counter" class="value">0</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Agent stats -->
+            <div class="stats-panel">
+                <!-- Aegis stats -->
+                <div class="agent-stats aegis-stats">
+                    <div class="agent-name">AEGIS</div>
+                    <div class="agent-type">Blue Protocol</div>
+                    <div class="hp-bar-container">
+                        <div id="aegis-hp-bar" class="hp-bar aegis-bar"></div>
+                    </div>
+                    <div class="hp-text" id="aegis-hp-text">100/100</div>
+                </div>
+                
+                <!-- Velo stats -->
+                <div class="agent-stats velo-stats">
+                    <div class="agent-name">VELO</div>
+                    <div class="agent-type">Red Protocol</div>
+                    <div class="hp-bar-container">
+                        <div id="velo-hp-bar" class="hp-bar velo-bar"></div>
+                    </div>
+                    <div class="hp-text" id="velo-hp-text">100/100</div>
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls-panel">
+                <button id="start-btn" class="control-btn start-btn">START</button>
+                <button id="pause-btn" class="control-btn pause-btn" disabled>PAUSE</button>
+                <button id="reset-btn" class="control-btn reset-btn">RESET</button>
+            </div>
+            
+            <!-- Legend -->
+            <div class="legend-panel">
+                <div class="legend-title">LEGEND</div>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <div class="legend-color aegis-color"></div>
+                        <span>AEGIS (Blue)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color velo-color"></div>
+                        <span>VELO (Red)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color arena-color"></div>
+                        <span>Arena (3x3)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color trap-color"></div>
+                        <span>Traps</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Scripts -->
+    <script src="game/gameState.js"></script>
+    <script src="engine/gameEngine.js"></script>
+    <script src="engine/animationController.js"></script>
+    <script src="scene/sceneSetup.js"></script>
+    <script src="scene/gridRenderer.js"></script>
+    <script src="objects/aegis.js"></script>
+    <script src="objects/velo.js"></script>
+    <script src="objects/trap.js"></script>
+    <script src="objects/arena.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
