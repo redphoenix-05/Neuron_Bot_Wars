@@ -1,6 +1,40 @@
 # Neuron Bot Wars - AI vs AI Turn-Based Game
 
-A console-based simulation where two AI agents navigate a maze with traps, then battle in an arena using strategic AI algorithms.
+A comprehensive AI simulation platform with **console backend** and **stunning 3D visualization**. Two AI agents navigate a maze with traps, then battle in an arena using strategic AI algorithms.
+
+## ✨ NOW WITH 3D VISUALIZATION!
+
+We've created a real-time **Three.js visualization** of the game! 
+
+🎮 **[See the Frontend README](frontend/README.md)** for details on the visualization.
+
+### Quick Links:
+- **Visualization Guide**: [frontend/README.md](frontend/README.md)
+- **Quick Start (30 sec)**: [frontend/QUICKSTART.md](frontend/QUICKSTART.md)  
+- **Backend Integration**: [frontend/INTEGRATION_GUIDE.md](frontend/INTEGRATION_GUIDE.md)
+
+### Features:
+- ✅ **Top-down tactical view** with 7×7 grid
+- ✅ **Animated agents** (AEGIS - Blue, VELO - Red)
+- ✅ **Glowing arena** with dynamic lighting
+- ✅ **Trap visualizations** with particle effects
+- ✅ **Real-time HP tracking**
+- ✅ **Smooth movement animations**
+- ✅ **Phase transitions** (Maze → Combat)
+
+### Running Both Backend + Frontend:
+
+```bash
+# Terminal 1: Start backend
+cd backend
+python main.py
+
+# Terminal 2: Start frontend server  
+cd frontend
+python server.py
+
+# Browser: Visit http://localhost:8000
+```
 
 ## 🎮 Game Overview
 

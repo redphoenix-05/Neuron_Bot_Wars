@@ -234,35 +234,81 @@ class NeuroBotwarsVisualizer {
   }
   
   /**
-   * Start game
+   * Start game - Fetch from backend API
    */
-  startGame() {
+  async startGame() {
     if (this.isSimulationRunning) return;
     
-    this.log('Starting simulation...');
+    this.log('Starting backend game server...');
     this.isSimulationRunning = true;
-    gameState.reset();
-    this.gameEngine.initialize();
-    this.gameEngine.start();
-    this.lastFrameTime = Date.now();
     
-    this.uiElements.startBtn.disabled = true;
-    this.uiElements.pauseBtn.disabled = false;
+    try {
+      // Call backend API to start new game
+      const response = await fetch('/api/game/start', { method: 'POST' });
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start game');
+      }
+      
+      this.log('Backend game started successfully');
+      
+      // Initialize game state from backend response
+      const backendState = data.state;
+      gameState.initializeFromBackend(backendState);
+      
+      // Display the game state in visualization
+      this.displayGameState(backendState);
+      
+      this.log(`Game loaded: Turn ${backendState.turn}, Phase ${backendState.phase}`);
+      
+      this.uiElements.startBtn.disabled = true;
+      this.uiElements.pauseBtn.disabled = false;
+      
+    } catch (error) {
+      this.log(`ERROR: ${error.message}`);
+      this.isSimulationRunning = false;
+      this.uiElements.startBtn.disabled = false;
+    }
   }
+  
+  /**
+   * Display backend game state
+   */
+  displayGameState(backendState) {
+    // Update agent positions
+    this.aegisVisual.updatePosition(backendState.aegis);
+    this.veloVisual.updatePosition(backendState.velo);
+    
+    // Update agent HP bars
+    this.updateHPBars();
+    
+    // Update phase display
+    this.updatePhaseDisplay();
+    
+    // Log state summary
+    this.log(`AEGIS: [${backendState.aegis.x},${backendState.aegis.y}] HP:${backendState.aegis.hp}`);
+    this.log(`VELO:  [${backendState.velo.x},${backendState.velo.y}] HP:${backendState.velo.hp}`);
+    this.log(`Traps: ${backendState.traps.length}  Turn: ${backendState.turn}`);
+  }
+  
+  /**
+   * Update HP bars
+   */
+  updateHPBars() {
+    const aegisPercent = (gameState.aegis.hp / gameState.aegis.maxHp) * 100;
+    const veloPercent = (gameState.velo.hp / gameState.velo.maxHp) * 100;
+    
+    this.uiElements.aegisHPBar.style.width = aegisPercent + '%';
+    this.uiElements.veloHPBar.style.width = veloPercent + '%';
+  }
+  
   
   /**
    * Toggle pause
    */
   togglePause() {
-    if (this.gameEngine.isPaused) {
-      this.gameEngine.resume();
-      this.log('Game resumed');
-      this.uiElements.pauseBtn.textContent = 'PAUSE';
-    } else {
-      this.gameEngine.pause();
-      this.log('Game paused');
-      this.uiElements.pauseBtn.textContent = 'RESUME';
-    }
+    this.log('Pause not available in backend mode');
   }
   
   /**
@@ -270,10 +316,8 @@ class NeuroBotwarsVisualizer {
    */
   resetGame() {
     this.log('Resetting game...');
-    this.gameEngine.stop();
     this.isSimulationRunning = false;
     gameState.reset();
-    this.animationController.activeAnimations.clear();
     
     // Reset agent positions
     this.agentVisualPositions.aegis = { x: gameState.aegis.x, y: gameState.aegis.y };
@@ -284,7 +328,6 @@ class NeuroBotwarsVisualizer {
     
     this.uiElements.startBtn.disabled = false;
     this.uiElements.pauseBtn.disabled = true;
-    this.uiElements.pauseBtn.textContent = 'PAUSE';
     
     this.updatePhaseDisplay();
   }
@@ -293,16 +336,17 @@ class NeuroBotwarsVisualizer {
    * Update phase display
    */
   updatePhaseDisplay() {
-    const state = this.gameEngine.getState();
-    const phaseText = state.currentState === 'maze' ? 'Maze Navigation' 
-                    : state.currentState === 'battle' ? 'Combat Arena'
-                    : state.currentState === 'transition' ? 'Transitioning...'
+    const phaseText = gameState.phase === 1 ? 'Maze Navigation' 
+                    : gameState.phase === 2 ? 'Combat Arena'
                     : 'Game Over';
     
     this.uiElements.phaseDisplay.textContent = phaseText;
-    this.uiElements.turnCounter.textContent = state.turn;
+    this.uiElements.turnCounter.textContent = gameState.turnCount;
   }
   
+  /**
+   * Main animation loop
+   */
   /**
    * Main animation loop
    */
@@ -313,11 +357,6 @@ class NeuroBotwarsVisualizer {
     const currentTime = Date.now();
     const deltaTime = Math.min((currentTime - this.lastFrameTime) / 1000, 0.05);
     this.lastFrameTime = currentTime;
-    
-    // Update game engine
-    if (this.isSimulationRunning) {
-      this.gameEngine.update(deltaTime);
-    }
     
     // Update animations
     this.animationController.update(deltaTime);
@@ -343,7 +382,7 @@ class NeuroBotwarsVisualizer {
     this.uiElements.aegisHPBar.style.width = aegisPercent + '%';
     this.uiElements.veloHPBar.style.width = veloPercent + '%';
     
-    this.uiElements.turnCounter.textContent = this.gameEngine.getState().turn;
+    this.uiElements.turnCounter.textContent = gameState.turnCount;
     
     document.getElementById('aegis-hp-text').textContent = `${Math.max(0, aegisHp)}/${maxHp}`;
     document.getElementById('velo-hp-text').textContent = `${Math.max(0, veloHp)}/${maxHp}`;
