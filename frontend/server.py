@@ -24,16 +24,6 @@ FRONTEND_DIR = Path(__file__).parent
 game_controller = None
 
 class GameAPIHandler(http.server.SimpleHTTPRequestHandler):
-    def translate_path(self, path):
-        """Translate URL path to filesystem path"""
-        # Handle API routes
-        if path.startswith('/api/'):
-            return path  # Return as-is for API routing
-        
-        if path == '/' or path == '':
-            path = '/index.html'
-        return str(FRONTEND_DIR / path.lstrip('/'))
-    
     def do_GET(self):
         """Handle GET requests"""
         parsed_url = urlparse(self.path)

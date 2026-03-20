@@ -1,400 +1,363 @@
 /**
  * Main Application Module
- * Orchestrates the game visualization with proper game engine integration
+ * Orchestrates the game visualization — wires GameEngine, AnimationController,
+ * and all visuals into a single animation loop.
  */
 
 class NeuroBotwarsVisualizer {
   constructor() {
-    // Scene and visuals
-    this.sceneSetup = null;
-    this.gridRenderer = null;
-    this.aegisVisual = null;
-    this.veloVisual = null;
-    this.arenaVisual = null;
-    
-    // Game management
-    this.gameEngine = null;
-    this.animationController = null;
-    this.isSimulationRunning = false;
+    // ── Core systems ──
+    this.sceneSetup          = null;
+    this.gridRenderer        = null;
+    this.aegisVisual         = null;
+    this.veloVisual          = null;
+    this.arenaVisual         = null;
+    this.gameEngine          = new GameEngine();
+    this.animationController = new AnimationController();
+
+    // ── Timing ──
     this.lastFrameTime = Date.now();
-    
-    // Agent visual positions (for interpolation)
-    this.agentVisualPositions = {
-      aegis: { x: gameState.aegis.x, y: gameState.aegis.y },
-      velo: { x: gameState.velo.x, y: gameState.velo.y }
-    };
-    
-    // UI references
-    this.uiElements = {
-      aegisHPBar: null,
-      veloHPBar: null,
-      turnCounter: null,
-      phaseDisplay: null,
-      startBtn: null,
-      pauseBtn: null,
-      resetBtn: null,
-      debugPanel: null
-    };
-    
-    // Initialize
+    this.isSimulationRunning = false;
+
+    // ── UI refs ──
+    this.ui = {};
+
     this.init();
   }
-  
-  /**
-   * Initialize the visualizer
-   */
+
+  // ════════════════════════════════════════
+  //   INITIALISATION
+  // ════════════════════════════════════════
   init() {
-    this.log('Creating scene...');
-    
-    // Initialize scene
-    const container = document.getElementById('game-container');
-    this.sceneSetup = new SceneSetup(container);
-    
-    // Create game visuals
-    this.gridRenderer = new GridRenderer(this.sceneSetup.getScene(), gameState);
-    this.aegisVisual = new AegisVisual(this.sceneSetup.getScene(), gameState);
-    this.veloVisual = new VeloVisual(this.sceneSetup.getScene(), gameState);
-    this.arenaVisual = new ArenaVisual(this.sceneSetup.getScene(), gameState);
-    
-    // Setup arena lights
-    this.sceneSetup.setupArenaLights();
-    
-    this.log('Creating game engine...');
-    
-    // Create game engine and animation controller
-    this.gameEngine = new GameEngine();
-    this.animationController = new AnimationController();
-    
-    // Setup UI
-    this.setupUI();
-    
-    // Setup game engine callbacks
-    this.setupGameEngineCallbacks();
-    
-    this.log('Starting animation loop...');
-    
-    // Start animation loop
-    this.animate();
+    try {
+      this.log('Creating scene...');
+      const container = document.getElementById('game-container');
+      if (!container) throw new Error('game-container not found');
+
+      this.sceneSetup = new SceneSetup(container);
+      this.log('Scene created');
+
+      // Grid + maze
+      this.gridRenderer = new GridRenderer(this.sceneSetup.getScene(), gameState);
+      this.log('Grid created');
+
+      // Agents
+      this.aegisVisual = new AegisVisual(this.sceneSetup.getScene(), gameState);
+      this.veloVisual  = new VeloVisual(this.sceneSetup.getScene(), gameState);
+      this.log('Agents created');
+
+      // Arena
+      this.arenaVisual = new ArenaVisual(this.sceneSetup.getScene(), gameState);
+      this.arenaVisual.hide(); // hidden during maze
+      this.log('Arena created (hidden)');
+
+      // Lights
+      this.sceneSetup.setupArenaLights();
+
+      // UI
+      this.setupUI();
+      this.wireEngineEvents();
+
+      // Start animation loop
+      this.animate();
+      this.log('Visualizer ready!');
+    } catch (err) {
+      this.log(`ERROR: ${err.message}`);
+      console.error('Init error:', err);
+    }
   }
-  
-  /**
-   * Setup UI controls and references
-   */
+
+  // ════════════════════════════════════════
+  //   UI SETUP
+  // ════════════════════════════════════════
   setupUI() {
-    this.uiElements.aegisHPBar = document.getElementById('aegis-hp-bar');
-    this.uiElements.veloHPBar = document.getElementById('velo-hp-bar');
-    this.uiElements.turnCounter = document.getElementById('turn-counter');
-    this.uiElements.phaseDisplay = document.getElementById('phase-display');
-    
-    const startBtn = document.getElementById('start-btn');
-    const pauseBtn = document.getElementById('pause-btn');
-    const resetBtn = document.getElementById('reset-btn');
-    
-    this.uiElements.startBtn = startBtn;
-    this.uiElements.pauseBtn = pauseBtn;
-    this.uiElements.resetBtn = resetBtn;
-    
-    // Start button
-    startBtn.addEventListener('click', () => this.startGame());
-    
-    // Pause button
-    pauseBtn.addEventListener('click', () => this.togglePause());
-    
-    // Reset button
-    resetBtn.addEventListener('click', () => this.resetGame());
-    
-    // Create debug panel
+    this.ui.aegisHPBar  = document.getElementById('aegis-hp-bar');
+    this.ui.veloHPBar   = document.getElementById('velo-hp-bar');
+    this.ui.turnCounter = document.getElementById('turn-counter');
+    this.ui.phaseDisplay= document.getElementById('phase-display');
+    this.ui.aegisHPText = document.getElementById('aegis-hp-text');
+    this.ui.veloHPText  = document.getElementById('velo-hp-text');
+
+    document.getElementById('start-btn').addEventListener('click', () => this.startGame());
+    document.getElementById('pause-btn').addEventListener('click', () => this.togglePause());
+    document.getElementById('reset-btn').addEventListener('click', () => this.resetGame());
+
     this.createDebugPanel();
   }
-  
-  /**
-   * Create debug panel
-   */
+
   createDebugPanel() {
-    let debugPanel = document.getElementById('debug-panel');
-    if (!debugPanel) {
-      debugPanel = document.createElement('div');
-      debugPanel.id = 'debug-panel';
-      debugPanel.style.cssText = `
-        position: fixed;
-        bottom: 10px;
-        right: 10px;
-        width: 350px;
-        height: 200px;
-        background: rgba(0, 0, 0, 0.9);
-        border: 2px solid #00ff88;
-        border-radius: 5px;
-        padding: 10px;
-        font-family: monospace;
-        font-size: 11px;
-        color: #00ff88;
-        overflow-y: auto;
-        z-index: 10000;
+    let panel = document.getElementById('debug-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'debug-panel';
+      panel.style.cssText = `
+        position:fixed; bottom:10px; right:10px; width:380px; height:220px;
+        background:rgba(0,0,0,0.92); border:2px solid #00ff88; border-radius:5px;
+        padding:10px; font-family:monospace; font-size:11px; color:#00ff88;
+        overflow-y:auto; z-index:10000;
       `;
-      document.body.appendChild(debugPanel);
+      document.body.appendChild(panel);
     }
-    this.uiElements.debugPanel = debugPanel;
+    this.ui.debugPanel = panel;
   }
-  
-  /**
-   * Log to debug panel
-   */
+
   log(message) {
-    console.log(`[NeuroVisualizer] ${message}`);
-    if (this.uiElements.debugPanel) {
-      const time = new Date().toLocaleTimeString();
+    console.log(`[Visualizer] ${message}`);
+    if (this.ui.debugPanel) {
+      const t = new Date().toLocaleTimeString();
       const line = document.createElement('div');
-      line.textContent = `[${time}] ${message}`;
-      this.uiElements.debugPanel.appendChild(line);
-      this.uiElements.debugPanel.scrollTop = this.uiElements.debugPanel.scrollHeight;
-      
-      // Keep only last 50 lines
-      while (this.uiElements.debugPanel.children.length > 50) {
-        this.uiElements.debugPanel.removeChild(this.uiElements.debugPanel.firstChild);
+      line.textContent = `[${t}] ${message}`;
+      this.ui.debugPanel.appendChild(line);
+      this.ui.debugPanel.scrollTop = this.ui.debugPanel.scrollHeight;
+      while (this.ui.debugPanel.children.length > 60) {
+        this.ui.debugPanel.removeChild(this.ui.debugPanel.firstChild);
       }
     }
   }
-  
-  /**
-   * Setup game engine callbacks
-   */
-  setupGameEngineCallbacks() {
-    this.gameEngine.on('stateChange', (data) => {
-      this.log(`State: ${data.from} -> ${data.to}`);
-      
-      if (data.to === 'transition') {
-        this.sceneSetup.zoomToArena();
-        this.arenaVisual.activateCombat();
-        this.sceneSetup.setArenaLightIntensity(1);
+
+  // ════════════════════════════════════════
+  //   ENGINE EVENT WIRING
+  // ════════════════════════════════════════
+  wireEngineEvents() {
+    const engine = this.gameEngine;
+
+    // ── Agent move ──
+    engine.on('agentMove', (data) => {
+      const { agent, from, to, instant } = data;
+      const visual = agent === 'aegis' ? this.aegisVisual : this.veloVisual;
+
+      if (instant) {
+        // Teleport (e.g. battle spawn)
+        visual.setGridPosition(to.x, to.y, true);
+        return;
       }
-      
-      this.updatePhaseDisplay();
-    });
-    
-    this.gameEngine.on('turnStart', (data) => {
-      this.log(`Turn ${data.turn} (${data.phase})`);
-    });
-    
-    this.gameEngine.on('agentMove', (data) => {
-      const agent = data.agent;
-      const pos = data.pos;
-      this.log(`${agent} -> [${pos[0]},${pos[1]}]`);
-      
-      // Animate movement
-      this.animateAgentMovement(agent, pos);
-    });
-    
-    this.gameEngine.on('damage', (data) => {
-      const hp = gameState.getAgent(data.agent).hp;
-      this.log(`${data.agent} -${data.damage} HP (${hp})`);
-      
-      if (data.agent === 'aegis') {
-        this.aegisVisual.animateDamage();
-      } else {
-        this.veloVisual.animateDamage();
-      }
-    });
-    
-    this.gameEngine.on('trapActivate', (data) => {
-      this.log(`TRAP at [${data.pos[0]},${data.pos[1]}]`);
-      this.gridRenderer.activateTrap(data.pos[0], data.pos[1]);
-    });
-    
-    this.gameEngine.on('gameOver', (data) => {
-      this.log(`GAME OVER: ${data.winner}`);
-      this.isSimulationRunning = false;
-      this.uiElements.startBtn.disabled = false;
-      this.uiElements.pauseBtn.disabled = true;
-    });
-  }
-  
-  /**
-   * Animate agent movement
-   */
-  animateAgentMovement(agent, newPos) {
-    const visual = agent === 'aegis' ? this.aegisVisual : this.veloVisual;
-    const oldPos = this.agentVisualPositions[agent];
-    const worldOldPos = gameState.gridToWorld(oldPos.x, oldPos.y);
-    const worldNewPos = gameState.gridToWorld(newPos[0], newPos[1]);
-    
-    this.animationController.addAnimation(
-      `${agent}-move`,
-      worldOldPos,
-      worldNewPos,
-      0.3, // 300ms movement
-      {
-        onUpdate: (pos, progress) => {
-          visual.group.position.set(pos.x, 0.3, pos.z);
-        },
-        onComplete: () => {
-          this.agentVisualPositions[agent] = { x: newPos[0], y: newPos[1] };
+
+      // Smooth animated move
+      visual.setGridPosition(to.x, to.y, false);
+      const fromWorld = gameState.gridToWorld(from.x, from.y);
+      const toWorld   = gameState.gridToWorld(to.x, to.y);
+
+      const speed = agent === 'aegis' ? 0.35 : 0.25; // VELO faster
+
+      gameState.animating = true;
+      this.animationController.addAnimation(
+        `${agent}-move`,
+        fromWorld, toWorld, speed,
+        {
+          onUpdate: (pos, progress) => {
+            visual.group.position.set(pos.x, 0.3 + Math.sin(progress * Math.PI) * 0.08, pos.z);
+          },
+          onComplete: () => {
+            visual.syncPosition();
+            gameState.animating = false;
+          }
         }
+      );
+    });
+
+    // ── State change ──
+    engine.on('stateChange', (data) => {
+      this.log(`Phase: ${data.from} → ${data.to}`);
+
+      if (data.to === 'transition') {
+        this.handleTransitionStart();
+      } else if (data.to === 'battle') {
+        this.handleBattleStart();
+      } else if (data.to === 'finished') {
+        this.handleGameFinished();
       }
-    );
+    });
+
+    // ── Transition progress ──
+    engine.on('transitionProgress', (data) => {
+      // Smooth camera zoom during transition
+      const camY = 10 - data.progress * 2; // 10 → 8
+      this.sceneSetup.getCamera().position.y = camY;
+    });
+
+    // ── Damage ──
+    engine.on('damage', (data) => {
+      const visual = data.agent === 'aegis' ? this.aegisVisual : this.veloVisual;
+      visual.animateDamage();
+    });
+
+    // ── Attack visual ──
+    engine.on('attack', (data) => {
+      this.arenaVisual.createBattleFlash();
+    });
+
+    // ── Trap activation ──
+    engine.on('trapActivate', (data) => {
+      if (this.gridRenderer.activateTrap) {
+        this.gridRenderer.activateTrap(data.x, data.y);
+      }
+    });
+
+    // ── Game over ──
+    engine.on('gameOver', (data) => {
+      this.log(`🏆 GAME OVER — Winner: ${data.winner}`);
+    });
+
+    // ── Debug log forwarding ──
+    engine.on('debugLog', (data) => {
+      this.log(data.message);
+    });
   }
-  
-  /**
-   * Start game - Fetch from backend API
-   */
-  async startGame() {
-    if (this.isSimulationRunning) return;
-    
-    this.log('Starting backend game server...');
+
+  // ════════════════════════════════════════
+  //   PHASE HANDLERS
+  // ════════════════════════════════════════
+  handleTransitionStart() {
+    this.log('Transition: hiding maze, showing arena...');
+    // Fade/hide maze, show arena
+    if (this.gridRenderer.hideMaze) this.gridRenderer.hideMaze();
+    this.arenaVisual.show();
+    this.arenaVisual.activateCombat();
+    this.sceneSetup.setArenaLightIntensity(0.8);
+  }
+
+  handleBattleStart() {
+    this.log('Battle phase started!');
+    // Ensure agents are at correct battle positions visually
+    this.aegisVisual.syncPosition();
+    this.veloVisual.syncPosition();
+  }
+
+  handleGameFinished() {
+    this.isSimulationRunning = false;
+    const startBtn = document.getElementById('start-btn');
+    if (startBtn) startBtn.disabled = false;
+    const pauseBtn = document.getElementById('pause-btn');
+    if (pauseBtn) pauseBtn.disabled = true;
+  }
+
+  // ════════════════════════════════════════
+  //   GAME CONTROLS
+  // ════════════════════════════════════════
+  startGame() {
+    if (this.isSimulationRunning) {
+      this.log('Game already running');
+      return;
+    }
+
+    this.log('Starting new game...');
     this.isSimulationRunning = true;
-    
-    try {
-      // Call backend API to start new game
-      const response = await fetch('/api/game/start', { method: 'POST' });
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to start game');
-      }
-      
-      this.log('Backend game started successfully');
-      
-      // Initialize game state from backend response
-      const backendState = data.state;
-      gameState.initializeFromBackend(backendState);
-      
-      // Display the game state in visualization
-      this.displayGameState(backendState);
-      
-      this.log(`Game loaded: Turn ${backendState.turn}, Phase ${backendState.phase}`);
-      
-      this.uiElements.startBtn.disabled = true;
-      this.uiElements.pauseBtn.disabled = false;
-      
-    } catch (error) {
-      this.log(`ERROR: ${error.message}`);
-      this.isSimulationRunning = false;
-      this.uiElements.startBtn.disabled = false;
+    document.getElementById('start-btn').disabled = true;
+    document.getElementById('pause-btn').disabled = false;
+
+    // Reset visuals
+    this.animationController.clear();
+    this.arenaVisual.hide();
+    if (this.gridRenderer.showMaze) this.gridRenderer.showMaze();
+    this.sceneSetup.setArenaLightIntensity(0);
+    this.sceneSetup.getCamera().position.set(0, 10, 0);
+
+    // Start engine (handles gameState.reset + trap gen + pathfinding)
+    this.gameEngine.start();
+
+    // Rebuild grid visuals for new traps
+    this.gridRenderer.rebuildTraps();
+
+    // Place agent visuals at spawn
+    this.aegisVisual.setGridPosition(gameState.aegis.x, gameState.aegis.y, true);
+    this.veloVisual.setGridPosition(gameState.velo.x, gameState.velo.y, true);
+
+    this.log('Game started! Maze phase.');
+  }
+
+  togglePause() {
+    if (!this.isSimulationRunning) return;
+    if (this.gameEngine.isPaused) {
+      this.gameEngine.resume();
+      this.log('Resumed');
+    } else {
+      this.gameEngine.pause();
+      this.log('Paused');
     }
   }
-  
-  /**
-   * Display backend game state
-   */
-  displayGameState(backendState) {
-    // Update agent positions
-    this.aegisVisual.updatePosition(backendState.aegis);
-    this.veloVisual.updatePosition(backendState.velo);
-    
-    // Update agent HP bars
-    this.updateHPBars();
-    
-    // Update phase display
-    this.updatePhaseDisplay();
-    
-    // Log state summary
-    this.log(`AEGIS: [${backendState.aegis.x},${backendState.aegis.y}] HP:${backendState.aegis.hp}`);
-    this.log(`VELO:  [${backendState.velo.x},${backendState.velo.y}] HP:${backendState.velo.hp}`);
-    this.log(`Traps: ${backendState.traps.length}  Turn: ${backendState.turn}`);
-  }
-  
-  /**
-   * Update HP bars
-   */
-  updateHPBars() {
-    const aegisPercent = (gameState.aegis.hp / gameState.aegis.maxHp) * 100;
-    const veloPercent = (gameState.velo.hp / gameState.velo.maxHp) * 100;
-    
-    this.uiElements.aegisHPBar.style.width = aegisPercent + '%';
-    this.uiElements.veloHPBar.style.width = veloPercent + '%';
-  }
-  
-  
-  /**
-   * Toggle pause
-   */
-  togglePause() {
-    this.log('Pause not available in backend mode');
-  }
-  
-  /**
-   * Reset game
-   */
+
   resetGame() {
-    this.log('Resetting game...');
+    this.log('Resetting...');
+    this.gameEngine.stop();
     this.isSimulationRunning = false;
+    this.animationController.clear();
     gameState.reset();
-    
-    // Reset agent positions
-    this.agentVisualPositions.aegis = { x: gameState.aegis.x, y: gameState.aegis.y };
-    this.agentVisualPositions.velo = { x: gameState.velo.x, y: gameState.velo.y };
-    
-    this.aegisVisual.updatePosition();
-    this.veloVisual.updatePosition();
-    
-    this.uiElements.startBtn.disabled = false;
-    this.uiElements.pauseBtn.disabled = true;
-    
-    this.updatePhaseDisplay();
+
+    this.aegisVisual.setGridPosition(gameState.aegis.x, gameState.aegis.y, true);
+    this.veloVisual.setGridPosition(gameState.velo.x, gameState.velo.y, true);
+
+    this.arenaVisual.hide();
+    if (this.gridRenderer.showMaze) this.gridRenderer.showMaze();
+    this.sceneSetup.setArenaLightIntensity(0);
+    this.sceneSetup.getCamera().position.set(0, 10, 0);
+
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('pause-btn').disabled = true;
+
+    this.updateUI();
   }
-  
-  /**
-   * Update phase display
-   */
-  updatePhaseDisplay() {
-    const phaseText = gameState.phase === 1 ? 'Maze Navigation' 
-                    : gameState.phase === 2 ? 'Combat Arena'
-                    : 'Game Over';
-    
-    this.uiElements.phaseDisplay.textContent = phaseText;
-    this.uiElements.turnCounter.textContent = gameState.turnCount;
-  }
-  
-  /**
-   * Main animation loop
-   */
-  /**
-   * Main animation loop
-   */
+
+  // ════════════════════════════════════════
+  //   MAIN ANIMATION LOOP
+  // ════════════════════════════════════════
   animate() {
     requestAnimationFrame(() => this.animate());
-    
-    // Calculate delta time
-    const currentTime = Date.now();
-    const deltaTime = Math.min((currentTime - this.lastFrameTime) / 1000, 0.05);
-    this.lastFrameTime = currentTime;
-    
-    // Update animations
-    this.animationController.update(deltaTime);
-    
-    // Update UI
+
+    // Delta time
+    const now = Date.now();
+    const dt  = Math.min((now - this.lastFrameTime) / 1000, 0.05);
+    this.lastFrameTime = now;
+
+    // 1. Update game logic
+    if (this.isSimulationRunning) {
+      this.gameEngine.update(dt);
+    }
+
+    // 2. Update animations
+    this.animationController.update(dt);
+
+    // 3. Update agent idle animations (pulsing etc.)
+    if (this.aegisVisual && this.aegisVisual.updateIdle) this.aegisVisual.updateIdle(dt);
+    if (this.veloVisual  && this.veloVisual.updateIdle)  this.veloVisual.updateIdle(dt);
+
+    // 4. Update UI
     this.updateUI();
-    
-    // Render scene
-    this.sceneSetup.render();
+
+    // 5. Render
+    if (this.sceneSetup) this.sceneSetup.render();
   }
-  
-  /**
-   * Update UI elements
-   */
+
   updateUI() {
-    const aegisHp = gameState.aegis.hp;
-    const veloHp = gameState.velo.hp;
-    const maxHp = gameState.aegis.maxHp;
-    
-    const aegisPercent = Math.max(0, (aegisHp / maxHp) * 100);
-    const veloPercent = Math.max(0, (veloHp / maxHp) * 100);
-    
-    this.uiElements.aegisHPBar.style.width = aegisPercent + '%';
-    this.uiElements.veloHPBar.style.width = veloPercent + '%';
-    
-    this.uiElements.turnCounter.textContent = gameState.turnCount;
-    
-    document.getElementById('aegis-hp-text').textContent = `${Math.max(0, aegisHp)}/${maxHp}`;
-    document.getElementById('velo-hp-text').textContent = `${Math.max(0, veloHp)}/${maxHp}`;
+    if (!gameState.aegis) return;
+
+    const aegisP = Math.max(0, (gameState.aegis.hp / gameState.aegis.maxHp) * 100);
+    const veloP  = Math.max(0, (gameState.velo.hp  / gameState.velo.maxHp)  * 100);
+
+    if (this.ui.aegisHPBar) this.ui.aegisHPBar.style.width = aegisP + '%';
+    if (this.ui.veloHPBar)  this.ui.veloHPBar.style.width  = veloP  + '%';
+
+    if (this.ui.aegisHPText) this.ui.aegisHPText.textContent = `${Math.max(0, gameState.aegis.hp)}/${gameState.aegis.maxHp}`;
+    if (this.ui.veloHPText)  this.ui.veloHPText.textContent  = `${Math.max(0, gameState.velo.hp)}/${gameState.velo.maxHp}`;
+
+    if (this.ui.turnCounter)  this.ui.turnCounter.textContent  = gameState.turnCount;
+
+    if (this.ui.phaseDisplay) {
+      const labels = {
+        'maze':       'Maze Navigation',
+        'transition': 'Transition',
+        'battle':     'Combat Arena',
+        'finished':   `Game Over${gameState.winner ? ' — ' + gameState.winner + ' wins!' : ''}`
+      };
+      this.ui.phaseDisplay.textContent = labels[gameState.phase] || gameState.phase;
+    }
   }
 }
 
-// Initialize when page loads
+// ── Bootstrap ──
 document.addEventListener('DOMContentLoaded', () => {
-  new NeuroBotwarsVisualizer();
+  window.visualizer = new NeuroBotwarsVisualizer();
 });
 
-// Export for use
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = NeuroBotwarsVisualizer;
 }

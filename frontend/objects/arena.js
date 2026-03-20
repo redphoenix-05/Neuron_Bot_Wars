@@ -1,6 +1,6 @@
 /**
  * Arena Visual
- * Combat arena with special effects
+ * Combat arena with glowing borders. Supports show/hide for phase toggling.
  */
 
 class ArenaVisual {
@@ -8,231 +8,152 @@ class ArenaVisual {
     this.scene = scene;
     this.gameState = gameState;
     this.group = new THREE.Group();
-    
+
     this.createArena();
     this.scene.add(this.group);
   }
-  
+
   createArena() {
-    const arenaStart = this.gameState.arena.start;
-    const arenaEnd = this.gameState.arena.end;
-    
-    // Create metallic arena floor
-    for (let y = arenaStart; y <= arenaEnd; y++) {
-      for (let x = arenaStart; x <= arenaEnd; x++) {
+    const s = this.gameState.arena.start;
+    const e = this.gameState.arena.end;
+
+    // Arena floor tiles
+    for (let y = s; y <= e; y++) {
+      for (let x = s; x <= e; x++) {
         const pos = this.gameState.gridToWorld(x, y);
-        
-        const tileGeometry = new THREE.PlaneGeometry(1, 1);
-        const tileMaterial = new THREE.MeshStandardMaterial({
-          color: 0x1a4d3a,
-          roughness: 0.3,
-          metalness: 0.7,
-          emissive: 0x2d7a5e,
-          emissiveIntensity: 0.2
+        const tileGeo = new THREE.PlaneGeometry(1, 1);
+        const tileMat = new THREE.MeshStandardMaterial({
+          color: 0x1a4d3a, roughness: 0.3, metalness: 0.7,
+          emissive: 0x2d7a5e, emissiveIntensity: 0.2
         });
-        
-        const tile = new THREE.Mesh(tileGeometry, tileMaterial);
+        const tile = new THREE.Mesh(tileGeo, tileMat);
         tile.position.set(pos.x, 0.02, pos.z);
+        tile.rotation.x = -Math.PI / 2;
         tile.receiveShadow = true;
         this.group.add(tile);
       }
     }
-    
-    // Create glowing border
+
     this.createBorder();
   }
-  
+
   createBorder() {
-    const arenaStart = this.gameState.arena.start;
-    const arenaEnd = this.gameState.arena.end;
-    
-    // Border positions
+    const s = this.gameState.arena.start;
+    const e = this.gameState.arena.end;
+
     const corners = [
-      { x: arenaStart - 0.5, y: arenaStart - 0.5 },
-      { x: arenaEnd + 0.5, y: arenaStart - 0.5 },
-      { x: arenaEnd + 0.5, y: arenaEnd + 0.5 },
-      { x: arenaStart - 0.5, y: arenaEnd + 0.5 }
+      { x: s - 0.5, y: s - 0.5 },
+      { x: e + 0.5, y: s - 0.5 },
+      { x: e + 0.5, y: e + 0.5 },
+      { x: s - 0.5, y: e + 0.5 }
     ];
-    
-    // Create glowing edges
+
     for (let i = 0; i < corners.length; i++) {
-      const current = corners[i];
+      const cur  = corners[i];
       const next = corners[(i + 1) % corners.length];
-      
-      const startPos = this.gameState.gridToWorld(current.x, current.y);
-      const endPos = this.gameState.gridToWorld(next.x, next.y);
-      
-      const edgeLength = Math.sqrt(
-        Math.pow(endPos.x - startPos.x, 2) + 
-        Math.pow(endPos.z - startPos.z, 2)
-      );
-      
-      // Main edge
-      const edgeGeometry = new THREE.BoxGeometry(edgeLength, 0.12, 0.08);
-      const edgeMaterial = new THREE.MeshStandardMaterial({
-        color: 0x00ff88,
-        emissive: 0x00ff88,
-        emissiveIntensity: 0.4,
-        metalness: 0.8,
-        roughness: 0.2
+      const sp   = this.gameState.gridToWorld(cur.x, cur.y);
+      const ep   = this.gameState.gridToWorld(next.x, next.y);
+
+      const len = Math.sqrt((ep.x - sp.x) ** 2 + (ep.z - sp.z) ** 2);
+
+      // Edge bar
+      const edgeGeo = new THREE.BoxGeometry(len, 0.12, 0.08);
+      const edgeMat = new THREE.MeshStandardMaterial({
+        color: 0x00ff88, emissive: 0x00ff88,
+        emissiveIntensity: 0.4, metalness: 0.8, roughness: 0.2
       });
-      
-      const edge = new THREE.Mesh(edgeGeometry, edgeMaterial);
-      edge.position.set(
-        (startPos.x + endPos.x) / 2,
-        0.12,
-        (startPos.z + endPos.z) / 2
-      );
-      
-      const angle = Math.atan2(endPos.z - startPos.z, endPos.x - startPos.x);
-      edge.rotation.y = angle;
-      
+      const edge = new THREE.Mesh(edgeGeo, edgeMat);
+      edge.position.set((sp.x + ep.x) / 2, 0.12, (sp.z + ep.z) / 2);
+      edge.rotation.y = Math.atan2(ep.z - sp.z, ep.x - sp.x);
       edge.castShadow = true;
       this.group.add(edge);
-      
-      // Glow effect around edge
-      const glowGeometry = new THREE.BoxGeometry(edgeLength, 0.06, 0.15);
-      const glowMaterial = new THREE.MeshStandardMaterial({
-        color: 0x00ff88,
-        emissive: 0x00ff88,
-        emissiveIntensity: 0.2,
-        transparent: true,
-        opacity: 0.4
+
+      // Glow bar
+      const glowGeo = new THREE.BoxGeometry(len, 0.06, 0.15);
+      const glowMat = new THREE.MeshStandardMaterial({
+        color: 0x00ff88, emissive: 0x00ff88,
+        emissiveIntensity: 0.2, transparent: true, opacity: 0.4
       });
-      
-      const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-      glow.position.set(
-        (startPos.x + endPos.x) / 2,
-        0.08,
-        (startPos.z + endPos.z) / 2
-      );
-      glow.rotation.y = angle;
+      const glow = new THREE.Mesh(glowGeo, glowMat);
+      glow.position.set((sp.x + ep.x) / 2, 0.08, (sp.z + ep.z) / 2);
+      glow.rotation.y = edge.rotation.y;
       this.group.add(glow);
     }
-    
-    // Create center spotlight effect
+
     this.createSpotlight();
   }
-  
+
   createSpotlight() {
-    // Arena center position
-    const centerX = -0.5;
-    const centerZ = -0.5;
-    
-    // Glowing center circle
-    const centerGeometry = new THREE.CylinderGeometry(1.8, 1.8, 0.1, 32);
-    const centerMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1a534d,
-      emissive: 0x2d7a5e,
-      emissiveIntensity: 0.15,
-      metalness: 0.5
+    const pos = this.gameState.gridToWorld(3, 3);
+    const centerGeo = new THREE.CylinderGeometry(1.8, 1.8, 0.1, 32);
+    const centerMat = new THREE.MeshStandardMaterial({
+      color: 0x1a534d, emissive: 0x2d7a5e,
+      emissiveIntensity: 0.15, metalness: 0.5
     });
-    
-    const center = new THREE.Mesh(centerGeometry, centerMaterial);
-    center.position.set(centerX, 0.01, centerZ);
+    const center = new THREE.Mesh(centerGeo, centerMat);
+    center.position.set(pos.x, 0.01, pos.z);
     center.receiveShadow = true;
     this.group.add(center);
   }
-  
-  /**
-   * Animate arena activation (combat phase start)
-   */
+
+  /** Show arena */
+  show() { this.group.visible = true; }
+
+  /** Hide arena */
+  hide() { this.group.visible = false; }
+
+  /** Activate combat glow */
   activateCombat() {
-    // Increase glow intensity
-    const duration = 500;
-    const startTime = Date.now();
-    
-    const animate = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      
-      // Gradually increase all emissions
+    const dur = 500;
+    const start = Date.now();
+    const anim = () => {
+      const p = Math.min((Date.now() - start) / dur, 1);
       this.group.children.forEach(child => {
-        if (child.material.emissive) {
-          child.material.emissiveIntensity = 0.2 + progress * 0.4;
+        if (child.material && child.material.emissive) {
+          child.material.emissiveIntensity = 0.2 + p * 0.4;
         }
       });
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      }
+      if (p < 1) requestAnimationFrame(anim);
     };
-    
-    animate();
+    anim();
   }
-  
-  /**
-   * Deactivate arena (back to normal)
-   */
+
+  /** Deactivate */
   deactivateCombat() {
-    const duration = 500;
-    const startTime = Date.now();
-    
-    const animate = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      
-      // Gradually decrease emissions
-      this.group.children.forEach(child => {
-        if (child.material.emissive) {
-          child.material.emissiveIntensity = 0.6 - progress * 0.4;
-        }
-      });
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
+    this.group.children.forEach(child => {
+      if (child.material && child.material.emissive) {
+        child.material.emissiveIntensity = 0.2;
       }
-    };
-    
-    animate();
-  }
-  
-  /**
-   * Create battle flash effect at arena center
-   */
-  createBattleFlash() {
-    const flashGeometry = new THREE.SphereGeometry(2, 16, 16);
-    const flashMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffff00,
-      emissive: 0xffff00,
-      emissiveIntensity: 1.0,
-      transparent: true,
-      opacity: 0.5
     });
-    
-    const flash = new THREE.Mesh(flashGeometry, flashMaterial);
-    flash.position.set(-0.5, 0.5, -0.5);
+  }
+
+  /** Battle flash */
+  createBattleFlash() {
+    const pos = this.gameState.gridToWorld(3, 3);
+    const flashGeo = new THREE.SphereGeometry(1.5, 16, 16);
+    const flashMat = new THREE.MeshStandardMaterial({
+      color: 0xffff00, emissive: 0xffff00,
+      emissiveIntensity: 1.0, transparent: true, opacity: 0.5
+    });
+    const flash = new THREE.Mesh(flashGeo, flashMat);
+    flash.position.set(pos.x, 0.5, pos.z);
     this.group.add(flash);
-    
-    const duration = 150;
-    const startTime = Date.now();
-    
-    const animate = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      
-      flash.material.opacity = 0.5 * (1 - progress);
-      flash.scale.set(1 + progress * 0.5, 1 + progress * 0.5, 1 + progress * 0.5);
-      
-      if (progress < 1) {
-        requestAnimationFrame(animate);
-      } else {
-        this.group.remove(flash);
-      }
+
+    const dur = 150;
+    const start = Date.now();
+    const anim = () => {
+      const p = Math.min((Date.now() - start) / dur, 1);
+      flash.material.opacity = 0.5 * (1 - p);
+      flash.scale.set(1 + p * 0.5, 1 + p * 0.5, 1 + p * 0.5);
+      if (p < 1) requestAnimationFrame(anim);
+      else this.group.remove(flash);
     };
-    
-    animate();
+    anim();
   }
-  
-  /**
-   * Get arena mesh group
-   */
-  getMesh() {
-    return this.group;
-  }
+
+  getMesh() { return this.group; }
 }
 
-// Export for use in modules
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ArenaVisual;
 }

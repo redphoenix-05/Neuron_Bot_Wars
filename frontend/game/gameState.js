@@ -1,298 +1,254 @@
 /**
  * Game State Module
- * Represents the current state of the Neuro Bot Wars game
- * This is the source of truth for all game data
+ * Source of truth for all game data.
+ * Uses string-based state machine: "maze" | "transition" | "battle" | "finished"
  */
 
 const gameState = {
-  // Grid configuration
+  // ── Grid configuration ──
   gridSize: 7,
   tileSize: 1,
-  
-  // Arena configuration (center 3x3)
-  arena: {
-    start: 2,
-    end: 4,
-    size: 3
-  },
-  
-  // Agent positions
-  aegis: {
-    x: 0,
-    y: 6,
-    hp: 100,
-    maxHp: 100,
-    alive: true,
-    inArena: false,
-    isDefending: false
-  },
-  
-  velo: {
-    x: 6,
-    y: 0,
-    hp: 100,
-    maxHp: 100,
-    alive: true,
-    inArena: false,
-    isDefending: false
-  },
-  
-  // Trap positions
-  traps: [
-    { x: 2, y: 1 },
-    { x: 4, y: 5 },
-    { x: 1, y: 3 },
-    { x: 5, y: 2 },
-    { x: 3, y: 4 }
-  ],
-  
-  // Maze cell types
-  // CellType: WALL='#', PATH='.', TRAP='T', ENTRY='E', ARENA=' '
-  maze: [
-    ['#', '.', '.', '.', '.', '.', '#'],
-    ['#', '.', '#', '#', '#', '.', '#'],
-    ['.', '.', '#', ' ', ' ', '.', '.'],
-    ['.', '#', ' ', ' ', ' ', '#', '.'],
-    ['.', '.', ' ', ' ', ' ', '.', '.'],
-    ['#', '.', '#', '#', '#', '.', '#'],
-    ['#', '.', '.', '.', '.', '.', '#']
-  ],
-  
-  // Arena entry point
-  arenaEntry: { x: 2, y: 3 },
-  
-  // Game phase
-  phase: 1, // 1 = Maze Navigation, 2 = Combat
+
+  // Arena is the center 3×3 (indices 2–4)
+  arena: { start: 2, end: 4, size: 3 },
+
+  // ── State machine ──
+  phase: 'maze', // "maze" | "transition" | "battle" | "finished"
+
+  // ── Turn tracking ──
   turnCount: 0,
   mazeTurnCount: 0,
-  
-  // Animation states
+  battleTurnCount: 0,
+  currentTurnAgent: 'aegis', // alternates each turn
+
+  // ── Maze layout ──
+  // 7×7 grid:  '#' = wall, '.' = path, 'A' = arena cell
+  // Arena occupies rows 2-4, cols 2-4
+  maze: [
+    ['.', '.', '#', '.', '#', '.', '.'],
+    ['.', '#', '.', '.', '.', '#', '.'],
+    ['.', '.', 'A', 'A', 'A', '.', '.'],
+    ['#', '.', 'A', 'A', 'A', '.', '#'],
+    ['.', '.', 'A', 'A', 'A', '.', '.'],
+    ['.', '#', '.', '.', '.', '#', '.'],
+    ['.', '.', '#', '.', '#', '.', '.']
+  ],
+
+  // Arena entry point (top of arena)
+  arenaEntry: { x: 3, y: 1 },
+
+  // ── Agents ──
+  aegis: {
+    x: 0, y: 0,       // spawn top-left corner
+    hp: 100, maxHp: 100,
+    attack: 15, defense: 5,
+    alive: true,
+    inArena: false,
+    reachedEntry: false,
+    isDefending: false,
+    color: 'blue',
+    name: 'AEGIS',
+    path: [],          // pre-computed path
+    pathIndex: 0
+  },
+
+  velo: {
+    x: 6, y: 6,       // spawn bottom-right corner
+    hp: 100, maxHp: 100,
+    attack: 12, defense: 3,
+    alive: true,
+    inArena: false,
+    reachedEntry: false,
+    isDefending: false,
+    color: 'red',
+    name: 'VELO',
+    path: [],
+    pathIndex: 0
+  },
+
+  // ── Traps ──
+  traps: [],  // [{x, y, active}]
+
+  // ── Power-up ──
+  powerUp: {
+    spawned: false,
+    pickedUp: false,
+    x: -1, y: -1,
+    effect: 'damage_boost',
+    value: 10
+  },
+
+  // ── Medkit ──
+  medkit: {
+    spawned: false,
+    pickedUp: false,
+    x: -1, y: -1,
+    healAmount: 30
+  },
+
+  // ── Animation ──
   animating: false,
-  
-  /**
-   * Convert grid coordinates to world position
-   * @param {number} gridX - Grid X coordinate (0-6)
-   * @param {number} gridY - Grid Y coordinate (0-6)
-   * @returns {object} World position {x, z}
-   */
-  gridToWorld: function(gridX, gridY) {
-    // Convert grid (0-6) to world (-3 to 3)
-    const x = gridX - 3;
-    const z = gridY - 3;
-    return { x, z };
+
+  // ── Winner ──
+  winner: null,
+
+  // ════════════════════════════════════════
+  //   METHODS
+  // ════════════════════════════════════════
+
+  /** Convert grid (0–6) → world coords (centered at 0) */
+  gridToWorld(gridX, gridY) {
+    return { x: gridX - 3, z: gridY - 3 };
   },
-  
-  /**
-   * Convert world coordinates to grid position
-   * @param {number} x - World X coordinate
-   * @param {number} z - World Z coordinate
-   * @returns {object} Grid position {x, y}
-   */
-  worldToGrid: function(x, z) {
-    const gridX = Math.round(x + 3);
-    const gridY = Math.round(z + 3);
-    return { x: gridX, y: gridY };
+
+  worldToGrid(x, z) {
+    return { x: Math.round(x + 3), y: Math.round(z + 3) };
   },
-  
-  /**
-   * Check if position is in arena
-   * @param {number} x - Grid X
-   * @param {number} y - Grid Y
-   * @returns {boolean}
-   */
-  isInArena: function(x, y) {
-    return x >= this.arena.start && x <= this.arena.end && 
+
+  isInArena(x, y) {
+    return x >= this.arena.start && x <= this.arena.end &&
            y >= this.arena.start && y <= this.arena.end;
   },
-  
-  /**
-   * Check if position has a trap
-   * @param {number} x - Grid X
-   * @param {number} y - Grid Y
-   * @returns {boolean}
-   */
-  hasTrap: function(x, y) {
-    return this.traps.some(trap => trap.x === x && trap.y === y);
-  },
-  
-  /**
-   * Get cell type at position
-   * @param {number} x - Grid X
-   * @param {number} y - Grid Y
-   * @returns {string} Cell type
-   */
-  getCellType: function(x, y) {
-    if (x < 0 || x >= this.gridSize || y < 0 || y >= this.gridSize) {
-      return null;
-    }
+
+  /** Check cell type. Returns null for out-of-bounds. */
+  getCellType(x, y) {
+    if (x < 0 || x >= this.gridSize || y < 0 || y >= this.gridSize) return null;
     return this.maze[y][x];
   },
-  
-  /**
-   * Move an agent to a new position
-   * @param {string} agent - 'aegis' or 'velo'
-   * @param {number} x - New grid X
-   * @param {number} y - New grid Y
-   */
-  moveAgent: function(agent, x, y) {
-    if (agent === 'aegis') {
-      this.aegis.x = x;
-      this.aegis.y = y;
-      this.aegis.inArena = this.isInArena(x, y);
-    } else if (agent === 'velo') {
-      this.velo.x = x;
-      this.velo.y = y;
-      this.velo.inArena = this.isInArena(x, y);
+
+  /** Is this cell walkable? */
+  isWalkable(x, y) {
+    const cell = this.getCellType(x, y);
+    return cell !== null && cell !== '#';
+  },
+
+  hasTrap(x, y) {
+    return this.traps.some(t => t.x === x && t.y === y && t.active);
+  },
+
+  moveAgent(agentName, x, y) {
+    const agent = this.getAgent(agentName);
+    agent.x = x;
+    agent.y = y;
+    agent.inArena = this.isInArena(x, y);
+  },
+
+  damageAgent(agentName, amount) {
+    const agent = this.getAgent(agentName);
+    const actualDamage = Math.max(1, amount - (agent.isDefending ? agent.defense : 0));
+    agent.hp = Math.max(0, agent.hp - actualDamage);
+    if (agent.hp <= 0) {
+      agent.hp = 0;
+      agent.alive = false;
     }
+    agent.isDefending = false;
+    return actualDamage;
   },
-  
-  /**
-   * Damage agent
-   * @param {string} agent - 'aegis' or 'velo'
-   * @param {number} amount - Damage amount
-   */
-  damageAgent: function(agent, amount) {
-    if (agent === 'aegis') {
-      this.aegis.hp = Math.max(0, this.aegis.hp - amount);
-      if (this.aegis.hp === 0) {
-        this.aegis.alive = false;
-      }
-    } else if (agent === 'velo') {
-      this.velo.hp = Math.max(0, this.velo.hp - amount);
-      if (this.velo.hp === 0) {
-        this.velo.alive = false;
-      }
-    }
+
+  healAgent(agentName, amount) {
+    const agent = this.getAgent(agentName);
+    agent.hp = Math.min(agent.maxHp, agent.hp + amount);
   },
-  
-  /**
-   * Heal agent
-   * @param {string} agent - 'aegis' or 'velo'
-   * @param {number} amount - Heal amount
-   */
-  healAgent: function(agent, amount) {
-    if (agent === 'aegis') {
-      this.aegis.hp = Math.min(this.aegis.maxHp, this.aegis.hp + amount);
-    } else if (agent === 'velo') {
-      this.velo.hp = Math.min(this.velo.maxHp, this.velo.hp + amount);
-    }
-  },
-  
-  /**
-   * Set phase
-   * @param {number} phase - 1 or 2
-   */
-  setPhase: function(phase) {
-    this.phase = phase;
-  },
-  
-  /**
-   * Next turn
-   */
-  nextTurn: function() {
-    this.turnCount++;
-  },
-  
-  /**
-   * Get agent object
-   */
-  getAgent: function(name) {
+
+  getAgent(name) {
     return name === 'aegis' ? this.aegis : this.velo;
   },
-  
-  /**
-   * Reset for new match
-   */
-  reset: function() {
-    this.aegis = {
-      x: 0,
-      y: 6,
-      hp: 100,
-      maxHp: 100,
-      alive: true,
-      inArena: false,
-      isDefending: false
-    };
-    
-    this.velo = {
-      x: 6,
-      y: 0,
-      hp: 100,
-      maxHp: 100,
-      alive: true,
-      inArena: false,
-      isDefending: false
-    };
-    
-    this.phase = 1;
+
+  getOpponent(name) {
+    return name === 'aegis' ? 'velo' : 'aegis';
+  },
+
+  /** Generate traps on walkable non-arena cells (25–30% density) */
+  generateTraps() {
+    this.traps = [];
+    const walkableCells = [];
+
+    for (let y = 0; y < this.gridSize; y++) {
+      for (let x = 0; x < this.gridSize; x++) {
+        if (this.isWalkable(x, y) && !this.isInArena(x, y)) {
+          // Don't place traps on spawn points or arena entry
+          if ((x === this.aegis.x && y === this.aegis.y) ||
+              (x === this.velo.x && y === this.velo.y) ||
+              (x === this.arenaEntry.x && y === this.arenaEntry.y)) {
+            continue;
+          }
+          walkableCells.push({ x, y });
+        }
+      }
+    }
+
+    // 25–30% density
+    const density = 0.25 + Math.random() * 0.05;
+    const trapCount = Math.floor(walkableCells.length * density);
+
+    // Shuffle and pick
+    for (let i = walkableCells.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [walkableCells[i], walkableCells[j]] = [walkableCells[j], walkableCells[i]];
+    }
+
+    for (let i = 0; i < trapCount && i < walkableCells.length; i++) {
+      this.traps.push({ x: walkableCells[i].x, y: walkableCells[i].y, active: true });
+    }
+  },
+
+  /** Initialize from backend state (if backend is used) */
+  initializeFromBackend(backendState) {
+    if (backendState.aegis) {
+      Object.assign(this.aegis, {
+        x: backendState.aegis.x, y: backendState.aegis.y,
+        hp: backendState.aegis.hp, alive: backendState.aegis.alive
+      });
+    }
+    if (backendState.velo) {
+      Object.assign(this.velo, {
+        x: backendState.velo.x, y: backendState.velo.y,
+        hp: backendState.velo.hp, alive: backendState.velo.alive
+      });
+    }
+    if (backendState.traps) {
+      this.traps = backendState.traps.map(t => ({ x: t[0], y: t[1], active: true }));
+    }
+    this.turnCount = backendState.turn || 0;
+    this.phase = backendState.phase || 'maze';
+  },
+
+  /** Full reset */
+  reset() {
+    this.phase = 'maze';
     this.turnCount = 0;
     this.mazeTurnCount = 0;
-  },
-  
-  /**
-   * Apply damage to agent
-   * @param {string} agent - 'aegis' or 'velo'
-   * @param {number} damage - Damage amount
-   */
-  damageAgent: function(agent, damage) {
-    const target = agent === 'aegis' ? this.aegis : this.velo;
-    target.hp = Math.max(0, target.hp - damage);
-    if (target.hp === 0) {
-      target.alive = false;
-    }
-  },
-  
-  /**
-   * Set agent defending status
-   * @param {string} agent - 'aegis' or 'velo'
-   * @param {boolean} defending - Is defending
-   */
-  setDefending: function(agent, defending) {
-    if (agent === 'aegis') {
-      this.aegis.isDefending = defending;
-    } else if (agent === 'velo') {
-      this.velo.isDefending = defending;
-    }
-  },
-  
-  /**
-   * Update game phase
-   * @param {number} newPhase - 1 or 2
-   */
-  setPhase: function(newPhase) {
-    this.phase = newPhase;
-  },
-  
-  /**
-   * Increment turn count
-   */
-  nextTurn: function() {
-    this.turnCount++;
-    if (this.phase === 1) {
-      this.mazeTurnCount++;
-    }
-  },
-  
-  /**
-   * Reset all agent positions and HP for new game
-   */
-  reset: function() {
-    this.aegis = {
-      x: 0, y: 6, hp: 100, maxHp: 100,
-      alive: true, inArena: false, isDefending: false
-    };
-    this.velo = {
-      x: 6, y: 0, hp: 100, maxHp: 100,
-      alive: true, inArena: false, isDefending: false
-    };
-    this.phase = 1;
-    this.turnCount = 0;
-    this.mazeTurnCount = 0;
+    this.battleTurnCount = 0;
+    this.currentTurnAgent = 'aegis';
+    this.winner = null;
     this.animating = false;
+
+    this.aegis = {
+      x: 0, y: 0, hp: 100, maxHp: 100,
+      attack: 15, defense: 5,
+      alive: true, inArena: false, reachedEntry: false,
+      isDefending: false, color: 'blue', name: 'AEGIS',
+      path: [], pathIndex: 0
+    };
+
+    this.velo = {
+      x: 6, y: 6, hp: 100, maxHp: 100,
+      attack: 12, defense: 3,
+      alive: true, inArena: false, reachedEntry: false,
+      isDefending: false, color: 'red', name: 'VELO',
+      path: [], pathIndex: 0
+    };
+
+    this.traps = [];
+
+    this.powerUp = {
+      spawned: false, pickedUp: false,
+      x: -1, y: -1, effect: 'damage_boost', value: 10
+    };
+
+    this.medkit = {
+      spawned: false, pickedUp: false,
+      x: -1, y: -1, healAmount: 30
+    };
   }
 };
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = gameState;
-}
