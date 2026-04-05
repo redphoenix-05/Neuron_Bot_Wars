@@ -91,10 +91,10 @@ class NeuroBotwarsVisualizer {
       panel = document.createElement('div');
       panel.id = 'debug-panel';
       panel.style.cssText = `
-        position:fixed; bottom:10px; right:10px; width:380px; height:220px;
-        background:rgba(0,0,0,0.92); border:2px solid #00ff88; border-radius:5px;
-        padding:10px; font-family:monospace; font-size:11px; color:#00ff88;
-        overflow-y:auto; z-index:10000;
+        position:fixed; top:120px; left:10px; width:320px; height:180px;
+        background:rgba(0,0,0,0.85); border:1px solid #00aa55; border-radius:5px;
+        padding:8px; font-family:monospace; font-size:10px; color:#00ff88;
+        overflow-y:auto; z-index:500;
       `;
       document.body.appendChild(panel);
     }
@@ -121,6 +121,9 @@ class NeuroBotwarsVisualizer {
   wireEngineEvents() {
     const engine = this.gameEngine;
 
+    // animation counter — tracks how many move animations are in-flight
+    this._animCount = 0;
+
     // ── Agent move ──
     engine.on('agentMove', (data) => {
       const { agent, from, to, instant } = data;
@@ -139,6 +142,7 @@ class NeuroBotwarsVisualizer {
 
       const speed = agent === 'aegis' ? 0.35 : 0.25; // VELO faster
 
+      this._animCount++;
       gameState.animating = true;
       this.animationController.addAnimation(
         `${agent}-move`,
@@ -149,7 +153,8 @@ class NeuroBotwarsVisualizer {
           },
           onComplete: () => {
             visual.syncPosition();
-            gameState.animating = false;
+            this._animCount = Math.max(0, this._animCount - 1);
+            if (this._animCount === 0) gameState.animating = false;
           }
         }
       );
@@ -195,7 +200,8 @@ class NeuroBotwarsVisualizer {
 
     // ── Game over ──
     engine.on('gameOver', (data) => {
-      this.log(`🏆 GAME OVER — Winner: ${data.winner}`);
+      gameState.winner = data.winner;
+      this.log(`GAME OVER — Winner: ${data.winner}`);
     });
 
     // ── Debug log forwarding ──
@@ -247,6 +253,8 @@ class NeuroBotwarsVisualizer {
 
     // Reset visuals
     this.animationController.clear();
+    this._animCount = 0;
+    gameState.animating = false;
     this.arenaVisual.hide();
     if (this.gridRenderer.showMaze) this.gridRenderer.showMaze();
     this.sceneSetup.setArenaLightIntensity(0);
@@ -282,6 +290,8 @@ class NeuroBotwarsVisualizer {
     this.isSimulationRunning = false;
     this.animationController.clear();
     gameState.reset();
+    this._animCount = 0;
+    gameState.animating = false;
 
     this.aegisVisual.setGridPosition(gameState.aegis.x, gameState.aegis.y, true);
     this.veloVisual.setGridPosition(gameState.velo.x, gameState.velo.y, true);
