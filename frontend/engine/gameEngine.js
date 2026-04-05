@@ -21,7 +21,7 @@ class GameEngine {
     this.mazeTurn     = 0;
     this.battleTurn   = 0;
     this.maxMazeTurns   = 50;
-    this.maxBattleTurns = 50;
+    this.maxBattleTurns = 200;
 
     // ── Control ──
     this.isRunning = false;
@@ -115,8 +115,10 @@ class GameEngine {
         this.updateBattle(dt);
         break;
       case this.STATE_FINISHED:
-        this.gameOver = true;
-        this.emit('gameOver', { winner: this.winner });
+        if (!this.gameOver) {
+          this.gameOver = true;
+          this.emit('gameOver', { winner: this.winner });
+        }
         break;
     }
   }
@@ -384,7 +386,7 @@ class GameEngine {
   setupBattlePhase() {
     gameState.phase = 'battle';
 
-    // Battle spawn positions (inside the 3×3 arena)
+    // Battle spawn positions inside the 3×3 arena (x:2-4, y:2-4)
     const aegisSpawn = { x: 2, y: 3 };
     const veloSpawn  = { x: 4, y: 3 };
 
