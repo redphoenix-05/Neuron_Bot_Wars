@@ -24,22 +24,23 @@ const gameState = {
   // ── Maze layout ──
   // 7×7 grid:  '#' = wall, '.' = path, 'A' = arena cell
   // Arena occupies rows 2-4, cols 2-4
+  // Row 3 (y=3) is the main corridor — kept fully open so agents can walk across
   maze: [
     ['.', '.', '#', '.', '#', '.', '.'],
     ['.', '#', '.', '.', '.', '#', '.'],
     ['.', '.', 'A', 'A', 'A', '.', '.'],
-    ['#', '.', 'A', 'A', 'A', '.', '#'],
+    ['.', '.', 'A', 'A', 'A', '.', '.'],
     ['.', '.', 'A', 'A', 'A', '.', '.'],
     ['.', '#', '.', '.', '.', '#', '.'],
     ['.', '.', '#', '.', '#', '.', '.']
   ],
 
-  // Arena entry point (top of arena)
-  arenaEntry: { x: 3, y: 1 },
+  // Arena entry point (left side of arena, matching backend)
+  arenaEntry: { x: 2, y: 3 },
 
   // ── Agents ──
   aegis: {
-    x: 0, y: 0,       // spawn top-left corner
+    x: 0, y: 3,       // spawn left-center (matches backend AGENT_SPAWN_AEGIS)
     hp: 100, maxHp: 100,
     attack: 15, defense: 5,
     alive: true,
@@ -53,7 +54,7 @@ const gameState = {
   },
 
   velo: {
-    x: 6, y: 6,       // spawn bottom-right corner
+    x: 6, y: 3,       // spawn right-center (matches backend AGENT_SPAWN_VELO)
     hp: 100, maxHp: 100,
     attack: 12, defense: 3,
     alive: true,
@@ -166,12 +167,14 @@ const gameState = {
     for (let y = 0; y < this.gridSize; y++) {
       for (let x = 0; x < this.gridSize; x++) {
         if (this.isWalkable(x, y) && !this.isInArena(x, y)) {
-          // Don't place traps on spawn points or arena entry
+          // Don't place traps on spawn points, arena entry, or direct corridor (y=3)
           if ((x === this.aegis.x && y === this.aegis.y) ||
               (x === this.velo.x && y === this.velo.y) ||
               (x === this.arenaEntry.x && y === this.arenaEntry.y)) {
             continue;
           }
+          // Keep direct path (y=3) clear so agents can walk through
+          if (y === 3) continue;
           walkableCells.push({ x, y });
         }
       }
@@ -224,7 +227,7 @@ const gameState = {
     this.animating = false;
 
     this.aegis = {
-      x: 0, y: 0, hp: 100, maxHp: 100,
+      x: 0, y: 3, hp: 100, maxHp: 100,
       attack: 15, defense: 5,
       alive: true, inArena: false, reachedEntry: false,
       isDefending: false, color: 'blue', name: 'AEGIS',
@@ -232,7 +235,7 @@ const gameState = {
     };
 
     this.velo = {
-      x: 6, y: 6, hp: 100, maxHp: 100,
+      x: 6, y: 3, hp: 100, maxHp: 100,
       attack: 12, defense: 3,
       alive: true, inArena: false, reachedEntry: false,
       isDefending: false, color: 'red', name: 'VELO',
