@@ -22,7 +22,7 @@ class GameStateManager:
         # Configuration
         self.MAX_MAZE_TURNS = 50
         self.MAX_BATTLE_TURNS = 200
-        self.TRAP_DAMAGE = 10
+        self.TRAP_DAMAGE = 1
         self.GRID_SIZE = 7
         self.ARENA_START = 2
         self.ARENA_END = 4
@@ -59,6 +59,11 @@ class GameStateManager:
         self.traps = []
         self._generate_traps()
         
+        # Winner tracking
+        self.maze_winner = None
+        self.battle_winner = None
+        self.winner = None
+
         # Game events (for debugging/synchronization)
         self.events = []
     
@@ -80,8 +85,8 @@ class GameStateManager:
                     continue
                 candidates.append((x, y))
         
-        # Place 15-20 traps (25-30% density among maze cells)
-        num_traps = random.randint(15, 20)
+        # Place 6-10 traps (capped at 10 maximum)
+        num_traps = random.randint(6, 10)
         self.traps = random.sample(candidates, min(num_traps, len(candidates)))
     
     def move_agent(self, agent_name, new_x, new_y):
@@ -154,15 +159,21 @@ class GameStateManager:
             'turn': self.turn,
             'mazeTurn': self.maze_turn,
             'battleTurn': self.battle_turn,
-            'phase': 1 if self.current_state == self.STATE_MAZE else 2,
+            'phase': self.current_state,
             'aegis': self.aegis.copy(),
             'velo': self.velo.copy(),
-            'traps': self.traps.copy(),
+            'traps': [list(t) for t in self.traps],
             'gridSize': self.GRID_SIZE,
             'arenaStart': self.ARENA_START,
             'arenaEnd': self.ARENA_END,
             'arenaEntry': list(self.ARENA_ENTRY),
-            'gameOver': self.current_state == self.STATE_FINISHED
+            'agentSpawnAegis': list(self.AGENT_SPAWN_AEGIS),
+            'agentSpawnVelo': list(self.AGENT_SPAWN_VELO),
+            'mazeWinner': self.maze_winner,
+            'battleWinner': self.battle_winner,
+            'winner': self.winner,
+            'gameOver': self.current_state == self.STATE_FINISHED,
+            'replay': []
         }
     
     def _add_event(self, event_type, data):
@@ -199,6 +210,11 @@ class GameStateManager:
         self.velo['alive'] = True
         self.velo['inArena'] = False
         self.velo['isDefending'] = False
+        
+        # Reset winners
+        self.maze_winner = None
+        self.battle_winner = None
+        self.winner = None
         
         # Regenerate traps
         self._generate_traps()
