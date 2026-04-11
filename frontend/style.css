@@ -406,3 +406,22 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #00ff88;
 }
+
+/* ── Reference overlay elements ── */
+#banner {
+  position: fixed; top: 30px; left: 50%;
+  transform: translateX(-50%); color: #fff; font-size: 22px;
+  text-align: center; pointer-events: none; z-index: 10;
+  text-shadow: 0 0 12px rgba(255,255,255,0.6); white-space: nowrap;
+}
+#banner .msg { margin: 6px 0; opacity: 0; transition: opacity 0.5s ease-in; }
+#banner .msg.visible { opacity: 1; }
+.hp-bar-container { position: fixed; top: 10px; width: 150px; z-index: 10; pointer-events: none; }
+#hp-aegis { left: 12px; }
+#hp-velo  { right: 12px; }
+.hp-label { color: #ccc; font-size: 11px; font-family: 'Courier New', monospace; margin-bottom: 2px; }
+.hp-track { width: 150px; height: 12px; background: #222; border: 1px solid #555;
+            border-radius: 2px; overflow: hidden; }
+.hp-fill  { height: 100%; transition: width 0.3s ease; }
+#hp-aegis .hp-fill { background: #2255FF; }
+#hp-velo  .hp-fill { background: #FF2222; }

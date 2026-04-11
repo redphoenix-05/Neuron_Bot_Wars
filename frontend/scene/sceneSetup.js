@@ -154,21 +154,53 @@ class SceneSetup {
   }
   
   /**
-   * Handle window resize
+   * Switch from perspective (battle) back to orthographic (maze).
+   * Used on game reset.
+   */
+  switchToOrthographic() {
+    if (!this.camera.isPerspectiveCamera) return; // already ortho
+    const aspect = this.width / this.height;
+    const viewSize = 10;
+    const cam = new THREE.OrthographicCamera(
+      -viewSize * aspect / 2, viewSize * aspect / 2,
+       viewSize / 2, -viewSize / 2, 0.1, 100
+    );
+    cam.position.set(0, 10, 0);
+    cam.lookAt(0, 0, 0);
+    this.camera = cam;
+  }
+
+  /**
+   * Switch from orthographic (maze) to perspective (battle arena).
+   * Matches reference: PerspectiveCamera(60), position (0,12,6).
+   */
+  switchToPerspective() {
+    if (this.camera.isPerspectiveCamera) return; // already switched
+    const aspect = this.width / this.height;
+    const cam = new THREE.PerspectiveCamera(60, aspect, 0.1, 100);
+    cam.position.set(0, 12, 6);
+    cam.lookAt(0, 0, 0);
+    this.camera = cam;
+  }
+
+  /**
+   * Handle window resize — supports both ortho and perspective camera.
    */
   onWindowResize() {
     this.width = this.container.clientWidth;
     this.height = this.container.clientHeight;
-    
     const aspect = this.width / this.height;
-    const viewSize = 10;
-    
-    this.camera.left = -viewSize * aspect / 2;
-    this.camera.right = viewSize * aspect / 2;
-    this.camera.top = viewSize / 2;
-    this.camera.bottom = -viewSize / 2;
+
+    if (this.camera.isPerspectiveCamera) {
+      this.camera.aspect = aspect;
+    } else {
+      const viewSize = 10;
+      this.camera.left   = -viewSize * aspect / 2;
+      this.camera.right  =  viewSize * aspect / 2;
+      this.camera.top    =  viewSize / 2;
+      this.camera.bottom = -viewSize / 2;
+    }
     this.camera.updateProjectionMatrix();
-    
     this.renderer.setSize(this.width, this.height);
   }
   
