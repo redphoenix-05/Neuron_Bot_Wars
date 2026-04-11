@@ -1,6 +1,6 @@
 /**
  * Aegis Agent Visual
- * Blue spherical robot with glowing outline — smooth lerp movement.
+ * Blue sphere — reference style from neuro_bot_wars.html.
  */
 
 class AegisVisual {
@@ -9,7 +9,6 @@ class AegisVisual {
     this.gameState = gameState;
     this.group = new THREE.Group();
 
-    // Grid position tracking
     this.gridX = gameState.aegis.x;
     this.gridY = gameState.aegis.y;
 
@@ -20,64 +19,15 @@ class AegisVisual {
   }
 
   createAegis() {
-    // Main body — blue sphere
-    const bodyGeo = new THREE.SphereGeometry(0.25, 32, 32);
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x1e90ff,
-      emissive: 0x1e90ff,
-      emissiveIntensity: 0.3,
-      metalness: 0.8,
-      roughness: 0.2
-    });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
-    body.castShadow = true;
-    body.receiveShadow = true;
-    this.group.add(body);
-
-    // Glow outline
-    const glowGeo = new THREE.SphereGeometry(0.28, 32, 32);
-    const glowMat = new THREE.MeshStandardMaterial({
-      color: 0x1e90ff,
-      emissive: 0x4da6ff,
-      emissiveIntensity: 0.4,
+    // Reference: SphereGeometry(0.4, 16, 16), color 0x2255FF
+    this.material = new THREE.MeshStandardMaterial({
+      color: 0x2255FF,
       transparent: true,
-      opacity: 0.3,
-      side: THREE.BackSide
+      opacity: 1.0
     });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
-    glow.scale.set(1.15, 1.15, 1.15);
-    this.group.add(glow);
-
-    // Metallic bands
-    for (let i = 0; i < 3; i++) {
-      const bandGeo = new THREE.TorusGeometry(0.25, 0.02, 8, 16);
-      const bandMat = new THREE.MeshStandardMaterial({
-        color: 0x0066cc, metalness: 0.9, roughness: 0.1
-      });
-      const band = new THREE.Mesh(bandGeo, bandMat);
-      band.rotation.x = (i - 1) * 0.3;
-      band.castShadow = true;
-      this.group.add(band);
-    }
-
-    // Core light
-    const coreGeo = new THREE.SphereGeometry(0.08, 16, 16);
-    const coreMat = new THREE.MeshStandardMaterial({
-      color: 0x4da6ff, emissive: 0x4da6ff,
-      emissiveIntensity: 0.8, metalness: 0.5
-    });
-    const core = new THREE.Mesh(coreGeo, coreMat);
-    core.position.y = 0.12;
-    this.group.add(core);
-
-    // Arrow indicator
-    const arrowGeo = new THREE.ConeGeometry(0.05, 0.15, 8);
-    const arrowMat = new THREE.MeshStandardMaterial({ color: 0x87ceeb, metalness: 0.6 });
-    const arrow = new THREE.Mesh(arrowGeo, arrowMat);
-    arrow.position.y = 0.2;
-    arrow.position.z = 0.1;
-    arrow.castShadow = true;
-    this.group.add(arrow);
+    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), this.material);
+    this.mesh.castShadow = true;
+    this.group.add(this.mesh);
   }
 
   /**
@@ -110,45 +60,34 @@ class AegisVisual {
     this.syncPosition();
   }
 
-  /** Idle animation — gentle hover */
+  /** Idle animation — gentle y-bob */
   updateIdle(dt) {
-    const t = Date.now() * 0.002;
-    // Subtle breathing glow
-    if (this.group.children[1]) {
-      this.group.children[1].material.emissiveIntensity = 0.3 + Math.sin(t) * 0.1;
-    }
+    this.group.position.y = 0.3 + Math.sin(Date.now() * 0.002) * 0.04;
   }
 
-  /** Damage flash (red → blue) */
+  /** Damage flash — red then back to blue */
   animateDamage() {
-    const body = this.group.children[0];
-    const origColor = 0x1e90ff;
-    const dmgColor  = 0xff4444;
+    const origColor = 0x2255FF;
+    const dmgColor  = 0xFF0000;
     const dur = 300;
     const start = Date.now();
 
     const anim = () => {
       const p = Math.min((Date.now() - start) / dur, 1);
-      const c = new THREE.Color();
-      c.lerpColors(new THREE.Color(dmgColor), new THREE.Color(origColor), p);
-      body.material.emissive.copy(c);
+      this.material.color.lerpColors(
+        new THREE.Color(dmgColor), new THREE.Color(origColor), p
+      );
       if (p < 1) requestAnimationFrame(anim);
-      else body.material.emissive.setHex(origColor);
+      else this.material.color.setHex(origColor);
     };
     anim();
   }
 
   setDefending(defending) {
-    const glow = this.group.children[1];
-    glow.material.emissiveIntensity = defending ? 0.8 : 0.4;
+    this.material.color.setHex(defending ? 0x88aaff : 0x2255FF);
   }
 
-  updateHPDisplay(hp, maxHp) {
-    const intensity = 0.2 + (hp / maxHp) * 0.6;
-    if (this.group.children[1]) {
-      this.group.children[1].material.emissiveIntensity = intensity;
-    }
-  }
+  updateHPDisplay(hp, maxHp) { /* HP displayed in UI, not on mesh */ }
 
   getMesh() { return this.group; }
 }
