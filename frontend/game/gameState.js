@@ -35,8 +35,8 @@ const gameState = {
     ['.', '.', '#', '.', '#', '.', '.']
   ],
 
-  // Arena entry point (left side of arena, matching backend)
-  arenaEntry: { x: 2, y: 3 },
+  // Arena entry point (left side of arena, matching backend: row 3, col 1)
+  arenaEntry: { x: 3, y: 1 },
 
   // ── Agents ──
   aegis: {
@@ -92,18 +92,27 @@ const gameState = {
 
   // ── Winner ──
   winner: null,
+  mazeWinner: null,
+  battleWinner: null,
+
+  // ── Health pickup ──
+  healthPickupActive: false,
+  healthPickupPos: null,
 
   // ════════════════════════════════════════
   //   METHODS
   // ════════════════════════════════════════
 
-  /** Convert grid (0–6) → world coords (centered at 0) */
+  /** Convert grid (0–6) → world coords (centered at 0)
+   *  Backend uses (row, col). Frontend reads as (x=row, y=col).
+   *  gridToWorld(x, y) → Three.js { x: y-3, z: x-3 }
+   */
   gridToWorld(gridX, gridY) {
-    return { x: gridX - 3, z: gridY - 3 };
+    return { x: gridY - 3, z: gridX - 3 };
   },
 
   worldToGrid(x, z) {
-    return { x: Math.round(x + 3), y: Math.round(z + 3) };
+    return { x: Math.round(z + 3), y: Math.round(x + 3) };
   },
 
   isInArena(x, y) {
@@ -224,6 +233,10 @@ const gameState = {
     this.battleTurnCount = 0;
     this.currentTurnAgent = 'aegis';
     this.winner = null;
+    this.mazeWinner = null;
+    this.battleWinner = null;
+    this.healthPickupActive = false;
+    this.healthPickupPos = null;
     this.animating = false;
 
     this.aegis = {
