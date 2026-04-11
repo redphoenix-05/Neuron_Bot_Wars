@@ -5,15 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neuro Bot Wars - 3D Visualization</title>
     <link rel="stylesheet" href="style.css">
-    
-    <!-- Three.js library -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
+    <div id="banner"></div>
+    <div id="hp-aegis" class="hp-bar-container">
+        <div class="hp-label">AEGIS</div>
+        <div class="hp-track"><div class="hp-fill" id="hp-fill-aegis" style="width:100%"></div></div>
+    </div>
+    <div id="hp-velo" class="hp-bar-container">
+        <div class="hp-label">VELO</div>
+        <div class="hp-track"><div class="hp-fill" id="hp-fill-velo" style="width:100%"></div></div>
+    </div>
+
     <div class="main-container">
         <!-- Game viewport -->
         <div id="game-container" class="game-viewport"></div>
-        
+
         <!-- UI Overlay -->
         <div class="ui-overlay">
             <!-- Title -->
@@ -21,7 +28,7 @@
                 <h1>NEURO BOT WARS</h1>
                 <p>3D Tactical AI Visualizer</p>
             </div>
-            
+
             <!-- Game info -->
             <div class="game-info">
                 <div class="info-panel">
@@ -35,7 +42,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Agent stats -->
             <div class="stats-panel">
                 <!-- Aegis stats -->
@@ -47,7 +54,7 @@
                     </div>
                     <div class="hp-text" id="aegis-hp-text">100/100</div>
                 </div>
-                
+
                 <!-- Velo stats -->
                 <div class="agent-stats velo-stats">
                     <div class="agent-name">VELO</div>
@@ -58,14 +65,14 @@
                     <div class="hp-text" id="velo-hp-text">100/100</div>
                 </div>
             </div>
-            
+
             <!-- Controls -->
             <div class="controls-panel">
                 <button id="start-btn" class="control-btn start-btn">START</button>
                 <button id="pause-btn" class="control-btn pause-btn" disabled>PAUSE</button>
                 <button id="reset-btn" class="control-btn reset-btn">RESET</button>
             </div>
-            
+
             <!-- Legend -->
             <div class="legend-panel">
                 <div class="legend-title">LEGEND</div>
@@ -90,11 +97,11 @@
             </div>
         </div>
     </div>
-    
+
     <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="game/gameState.js"></script>
-    <script src="engine/gameEngine.js"></script>
-    <script src="engine/animationController.js"></script>
+    <script src="engine/coreEngine.js"></script>
     <script src="scene/sceneSetup.js"></script>
     <script src="scene/gridRenderer.js"></script>
     <script src="objects/aegis.js"></script>
