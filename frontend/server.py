@@ -38,6 +38,9 @@ class GameAPIHandler(http.server.SimpleHTTPRequestHandler):
         elif parsed_url.path == '/api/game/status':
             self.send_game_status()
             return
+        elif parsed_url.path == '/api/game/replay':
+            self.send_replay()
+            return
         
         # Default file serving
         super().do_GET()
@@ -71,15 +74,14 @@ class GameAPIHandler(http.server.SimpleHTTPRequestHandler):
         self.send_json_response(state)
     
     def send_next_state(self):
-        """Advance game by one turn and return new state"""
+        """Return current game state (game is pre-simulated on start)"""
         global game_controller
         if game_controller is None:
             self.send_json_response({'error': 'Game not started'}, 400)
             return
-        
-        # TODO: Implement single-step game advancement
+
         state = game_controller.get_current_state()
-        self.send_json_response(state)
+        self.send_json_response({'success': True, 'state': state})
     
     def send_game_status(self):
         """Send game status (running, finished, etc.)"""
@@ -90,7 +92,7 @@ class GameAPIHandler(http.server.SimpleHTTPRequestHandler):
         
         state = game_controller.get_current_state()
         status = 'running'
-        if state['phase'] > 2 or not state['aegis']['alive'] or not state['velo']['alive']:
+        if state.get('gameOver') or not state['aegis']['alive'] or not state['velo']['alive']:
             status = 'finished'
         
         self.send_json_response({
@@ -100,16 +102,25 @@ class GameAPIHandler(http.server.SimpleHTTPRequestHandler):
         })
     
     def start_new_game(self):
-        """Start a new game"""
+        """Start a new game — simulates full game and returns replay info"""
         global game_controller
         game_controller = GameController()
         game_controller.simulate_full_game()
         
-        state = game_controller.get_current_state()
         self.send_json_response({
-            'message': 'Game started',
-            'state': state
+            'message': 'Game simulated',
+            'totalEvents': len(game_controller.get_replay()),
+            'winner': game_controller.state.winner
         }, 201)
+    
+    def send_replay(self):
+        """Send the full replay event list"""
+        global game_controller
+        if game_controller is None:
+            self.send_json_response({'error': 'Game not started'}, 400)
+            return
+        replay = game_controller.get_replay()
+        self.send_json_response({'replay': replay, 'total': len(replay)})
 
 def run_server():
     """Start the HTTP server"""
@@ -125,6 +136,7 @@ def run_server():
         print(f"✓ API Endpoints:")
         print(f"  - GET  /api/game/state  → Current game state")
         print(f"  - GET  /api/game/status → Game status")
+        print(f"  - GET  /api/game/replay → Full replay event list")
         print(f"  - POST /api/game/start  → Start new game")
         print(f"\n✓ Serving from: {FRONTEND_DIR}")
         print(f"\nPress Ctrl+C to stop the server\n")
