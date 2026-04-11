@@ -25,55 +25,65 @@ class GridRenderer {
 
   /** Create the 7×7 grid tiles */
   createGrid() {
-    const SIZE = this.gameState.gridSize;
+    const SIZE   = this.gameState.gridSize;
+    const entry  = this.gameState.arenaEntry; // { x:3, y:1 }
 
-    for (let y = 0; y < SIZE; y++) {
-      this.tiles[y] = [];
-      for (let x = 0; x < SIZE; x++) {
-        const pos = this.gameState.gridToWorld(x, y);
+    for (let x = 0; x < SIZE; x++) {
+      this.tiles[x] = [];
+      for (let y = 0; y < SIZE; y++) {
+        const pos      = this.gameState.gridToWorld(x, y);
         const cellType = this.gameState.getCellType(x, y);
         const isArena  = this.gameState.isInArena(x, y);
 
+        // Arena cells are handled by ArenaVisual — skip them in the maze group
+        if (isArena) {
+          this.tiles[x][y] = null;
+          continue;
+        }
+
+        const isEntry = (x === entry.x && y === entry.y);
+        const isWall  = (cellType === '#');
+
         let tileGeo, tileMat;
 
-        if (cellType === '#') {
-          // Wall — raised dark block
-          tileGeo = new THREE.BoxGeometry(0.95, 0.25, 0.95);
+        if (isWall) {
+          // Tall wall — matching reference: BoxGeometry(1, 1.5, 1), dark 0x222233
+          tileGeo = new THREE.BoxGeometry(1, 1.5, 1);
           tileMat = new THREE.MeshStandardMaterial({
-            color: 0x2a2a3a, roughness: 0.8, metalness: 0.2
+            color: 0x222233, roughness: 0.8, metalness: 0.2
           });
-        } else if (isArena) {
-          // Arena cell — slightly different color, will be overlaid by ArenaVisual
-          tileGeo = new THREE.BoxGeometry(0.95, 0.05, 0.95);
+        } else if (isEntry) {
+          // Arena entry cell — green, matching reference exit tile 0x22AA44
+          tileGeo = new THREE.BoxGeometry(0.95, 0.1, 0.95);
           tileMat = new THREE.MeshStandardMaterial({
-            color: 0x0a3a2e, roughness: 0.5, metalness: 0.4,
-            emissive: 0x0a3a2e, emissiveIntensity: 0.1
+            color: 0x22AA44, emissive: 0x114422,
+            emissiveIntensity: 0.4, roughness: 0.5, metalness: 0.1
           });
         } else {
-          // Path
-          tileGeo = new THREE.BoxGeometry(0.95, 0.05, 0.95);
+          // Regular path — reference floor color 0x444455
+          tileGeo = new THREE.BoxGeometry(0.95, 0.1, 0.95);
           tileMat = new THREE.MeshStandardMaterial({
-            color: 0x1a1a2e, roughness: 0.7, metalness: 0.1
+            color: 0x444455, roughness: 0.7, metalness: 0.1
           });
         }
 
         const tile = new THREE.Mesh(tileGeo, tileMat);
         tile.receiveShadow = true;
-        tile.castShadow = (cellType === '#');
+        tile.castShadow = isWall;
 
-        if (cellType === '#') {
-          tile.position.set(pos.x, 0.125, pos.z);
+        if (isWall) {
+          tile.position.set(pos.x, 0.75, pos.z);  // center of 1.5-tall block
         } else {
-          tile.position.set(pos.x, 0.025, pos.z);
+          tile.position.set(pos.x, 0.05, pos.z);
         }
 
         this.mazeGroup.add(tile);
-        this.tiles[y][x] = tile;
+        this.tiles[x][y] = tile;
       }
     }
 
-    // Ground plane beneath grid
-    const groundGeo = new THREE.PlaneGeometry(10, 10);
+    // Dark ground plane beneath grid (reference: 0x080818)
+    const groundGeo = new THREE.PlaneGeometry(12, 12);
     const groundMat = new THREE.MeshStandardMaterial({
       color: 0x080818, roughness: 1, metalness: 0
     });
@@ -84,7 +94,7 @@ class GridRenderer {
     this.mazeGroup.add(ground);
   }
 
-  /** Create trap visuals from gameState.traps */
+  /** Create trap visuals from gameState.traps — reference style */
   createTraps() {
     // Clear old
     while (this.trapGroup.children.length > 0) {
@@ -98,40 +108,30 @@ class GridRenderer {
       const pos = this.gameState.gridToWorld(trap.x, trap.y);
       const spikeGroup = new THREE.Group();
 
-      // Pit
-      const pitGeo = new THREE.CylinderGeometry(0.3, 0.35, 0.1, 8);
-      const pitMat = new THREE.MeshStandardMaterial({
-        color: 0x1a0a1a, roughness: 0.9, metalness: 0.1
+      // Colored floor tile (reference: 0x882200 emissive 0x440000)
+      const floorMat = new THREE.MeshStandardMaterial({
+        color: 0x882200, emissive: 0x440000,
+        transparent: true, opacity: 1.0
       });
-      const pit = new THREE.Mesh(pitGeo, pitMat);
-      pit.position.y = -0.02;
-      spikeGroup.add(pit);
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.1, 0.95), floorMat);
+      floor.position.y = 0.05;
+      spikeGroup.add(floor);
 
-      // Spikes
-      for (let i = 0; i < 3; i++) {
-        const angle = (i / 3) * Math.PI * 2;
-        const spikeGeo = new THREE.ConeGeometry(0.06, 0.25, 6);
+      // 4 corner spikes (reference: ConeGeometry(0.08, 0.4, 4), color 0xCC4400 emissive 0x441100)
+      const spikeOffsets = [
+        { x: -0.2, z: -0.2 }, { x:  0.2, z: -0.2 },
+        { x: -0.2, z:  0.2 }, { x:  0.2, z:  0.2 }
+      ];
+      for (const offset of spikeOffsets) {
         const spikeMat = new THREE.MeshStandardMaterial({
-          color: 0x660000, emissive: 0x330000,
-          emissiveIntensity: 0.2, metalness: 0.7, roughness: 0.3
+          color: 0xCC4400, emissive: 0x441100,
+          transparent: true, opacity: 1.0
         });
-        const spike = new THREE.Mesh(spikeGeo, spikeMat);
-        spike.position.x = Math.cos(angle) * 0.12;
-        spike.position.z = Math.sin(angle) * 0.12;
-        spike.position.y = 0.08;
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.4, 4), spikeMat);
+        spike.position.set(offset.x, 0.3, offset.z);
         spike.castShadow = true;
         spikeGroup.add(spike);
       }
-
-      // Glow
-      const glowGeo = new THREE.CircleGeometry(0.35, 16);
-      const glowMat = new THREE.MeshStandardMaterial({
-        color: 0x880000, emissive: 0x440000, emissiveIntensity: 0.15
-      });
-      const glow = new THREE.Mesh(glowGeo, glowMat);
-      glow.rotation.x = -Math.PI / 2;
-      glow.position.y = -0.04;
-      spikeGroup.add(glow);
 
       spikeGroup.position.set(pos.x, 0, pos.z);
       spikeGroup.userData = { gridX: trap.x, gridY: trap.y };
