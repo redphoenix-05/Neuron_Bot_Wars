@@ -12,7 +12,7 @@ var EXIT           = { col: 7, row: 7 };
 var FIXED_WALLS    = [ { col: 6, row: 5 }, { col: 7, row: 5 } ];
 var TRAP_CHANCE    = 0.3;
 var STEP_INTERVAL  = 600;
-var TRAP_DAMAGE    = 15;
+var TRAP_DAMAGE    = 1;
 var BOARD_LEFT_X   = -10;
 var BOARD_RIGHT_X  = 10;
 var FADE_DURATION  = 400;
@@ -71,14 +71,20 @@ var healthPickupActive    = false;
 var healthPickupSpawned   = false;
 var endScreenInterval     = null;
 
+// Human player mode
+var humanModeEnabled  = false;
+var humanAgentName    = null;   // 'aegis' | 'velo'
+var pendingHumanAction = null;  // set when human submits an action
+var waitingForHuman   = false;  // true when it's human's turn
+
 // Battle constants
 var BATTLE_TURN_DELAY        = 900;
-var PULSE_STRIKE_DMG         = 10;
-var PULSE_STRIKE_DEF_DMG     = 3;
-var LOGIC_BURST_DMG          = 20;
-var LOGIC_BURST_DEF_DMG      = 10;
-var ELEMENTAL_BEAM_DMG       = 40;
-var ELEMENTAL_BEAM_DEF_DMG   = 28;
+var PULSE_STRIKE_DMG         = 5;
+var PULSE_STRIKE_DEF_DMG     = 2;
+var LOGIC_BURST_DMG          = 10;
+var LOGIC_BURST_DEF_DMG      = 6;
+var ELEMENTAL_BEAM_DMG       = 25;
+var ELEMENTAL_BEAM_DEF_DMG   = 18;
 var HEALTH_PICKUP_HEAL       = 40;
 var MOVE_COOLDOWN_TURNS      = 3;
 var DEFEND_COOLDOWN_TURNS    = 1;
@@ -713,7 +719,24 @@ function executeBattleTurn() {
     }
 
     var action;
-    if (currentTurnAgent === aegis) {
+    var currentAgentName = (currentTurnAgent === aegis) ? 'aegis' : 'velo';
+
+    if (humanModeEnabled && currentAgentName === humanAgentName) {
+        // Human's turn — wait for input
+        if (pendingHumanAction === null) {
+            // Signal UI that human must act
+            waitingForHuman = true;
+            battleTurnInProgress = false;
+            if (typeof CoreEngine._instance !== 'undefined' && CoreEngine._instance && CoreEngine._instance.onHumanTurn) {
+                CoreEngine._instance.onHumanTurn();
+            }
+            return; // Don't advance turn yet
+        }
+        // Human has submitted an action
+        action = pendingHumanAction;
+        pendingHumanAction = null;
+        waitingForHuman = false;
+    } else if (currentTurnAgent === aegis) {
         action = aegisAI(currentTurnAgent, otherAgent);
     } else {
         action = veloAI(currentTurnAgent, otherAgent);
@@ -750,9 +773,9 @@ function executeAction(action, agent, enemy) {
             agent.logicBurstCharge++;
             flashRed(enemy);
             animateBeam(agent, enemy, agent.originalColor, 200);
-            console.log('[ATTACK] ' + agent.name + ' Pulse Strike -> ' + enemy.name +
-                ' for ' + dmg + ' dmg. ' + enemy.name + ' HP: ' + enemy.hp +
-                '. Burst charge: ' + agent.logicBurstCharge);
+            var psMsg = agent.name + ': Pulse Strike → ' + enemy.name + ' [' + dmg + ' dmg] | HP: ' + enemy.hp;
+            console.log('[ATTACK] ' + psMsg);
+            showBanner(psMsg);
             break;
         }
         case 'logic_burst': {
@@ -1231,16 +1254,37 @@ function showEndScreen() {
     void endScreenEl.offsetWidth;
     endScreenEl.style.opacity = '1';
 
+    // Play Again button
+    var playAgainBtn = document.createElement('button');
+    playAgainBtn.textContent = '▶  PLAY AGAIN';
+    playAgainBtn.style.cssText = 'margin-top:20px;padding:12px 32px;background:transparent;' +
+        'border:2px solid #00ff88;border-radius:4px;color:#00ff88;font-family:\'Courier New\',monospace;' +
+        'font-size:13px;font-weight:bold;letter-spacing:3px;cursor:pointer;width:100%;' +
+        'transition:background 0.2s;';
+    playAgainBtn.onmouseover = function() { this.style.background = 'rgba(0,255,136,0.12)'; };
+    playAgainBtn.onmouseout  = function() { this.style.background = 'transparent'; };
+    playAgainBtn.onclick = function() {
+        clearInterval(endScreenInterval);
+        endScreenInterval = null;
+        gameLoopRunning = false;
+        var es = document.getElementById('end-screen');
+        if (es) es.remove();
+        // Return to start screen via main.js
+        if (window.resetToStartScreen) window.resetToStartScreen();
+    };
+    card.appendChild(playAgainBtn);
+
     var endCountdown = 30;
     endScreenInterval = setInterval(function() {
         endCountdown--;
         var el = document.getElementById('es-countdown');
-        if (el) el.textContent = 'Closing in: ' + endCountdown + 's';
+        if (el) el.textContent = 'Auto-closing in: ' + endCountdown + 's';
         if (endCountdown <= 0) {
             clearInterval(endScreenInterval);
             endScreenInterval = null;
             gameLoopRunning = false;
             console.log('[END] Screen frozen after 30s');
+            if (window.resetToStartScreen) window.resetToStartScreen();
         }
     }, 1000);
 
@@ -1349,12 +1393,16 @@ var bannerEl = null;
 function showBanner(text) {
     if (!bannerEl) bannerEl = document.getElementById('banner');
     if (!bannerEl) return;
+    // Clear all previous messages — show only current action
+    bannerEl.innerHTML = '';
     var div = document.createElement('div');
     div.className = 'msg';
     div.textContent = text;
     bannerEl.appendChild(div);
     void div.offsetWidth;
     div.classList.add('visible');
+    // Also update the action log panel
+    if (window.updateActionLog) window.updateActionLog(text);
 }
 
 // ================================================================
@@ -1431,6 +1479,52 @@ window.addEventListener('resize', function() {
 // === CoreEngine CLASS ===
 // ================================================================
 class CoreEngine {
+    constructor() {
+        CoreEngine._instance = this;
+        this.onHumanTurn = null; // callback set by main.js
+    }
+
+    setHumanMode(enabled, agentName) {
+        humanModeEnabled = enabled;
+        humanAgentName   = agentName || null;
+    }
+
+    submitHumanAction(action) {
+        // Convert directional move to grid move
+        if (action.type === 'move_dir' && humanModeEnabled) {
+            var agent = (humanAgentName === 'aegis') ? aegis : velo;
+            if (!agent) { pendingHumanAction = { type: 'pass' }; battleTurnInProgress = false; return; }
+            var dirMap = { up:{dc:0,dr:-1}, down:{dc:0,dr:1}, left:{dc:-1,dr:0}, right:{dc:1,dr:0} };
+            var d = dirMap[action.dir];
+            if (d) {
+                var nc = agent.logicalPos.col + d.dc;
+                var nr = agent.logicalPos.row + d.dr;
+                if (isArenaCell(nc, nr)) {
+                    var enemy = (humanAgentName === 'aegis') ? velo : aegis;
+                    if (!(enemy.logicalPos.col === nc && enemy.logicalPos.row === nr)) {
+                        pendingHumanAction = { type: 'move', target: { col: nc, row: nr } };
+                    } else {
+                        pendingHumanAction = { type: 'pass' };
+                    }
+                } else {
+                    pendingHumanAction = { type: 'pass' };
+                }
+            } else {
+                pendingHumanAction = { type: 'pass' };
+            }
+        } else {
+            pendingHumanAction = action;
+        }
+        // Resume turn execution
+        setTimeout(function() {
+            if (gameStatePhase === 'battle' && !battleTurnInProgress) {
+                battleTurnInProgress = true;
+                executeBattleTurn();
+                battleTurnInProgress = false;
+            }
+        }, 50);
+    }
+
     init(sceneSetupInstance) {
         coreScene    = sceneSetupInstance.getScene();
         coreRenderer = sceneSetupInstance.getRenderer();
@@ -1497,6 +1591,8 @@ class CoreEngine {
         healthPickupActive  = false;
         healthPickupSpawned = false;
         if (endScreenInterval) { clearInterval(endScreenInterval); endScreenInterval = null; }
+        pendingHumanAction = null;
+        waitingForHuman    = false;
         boardMeshes         = { left: [], right: [] };
         hpFillAegis         = null;
         hpFillVelo          = null;
@@ -1526,6 +1622,8 @@ class CoreEngine {
     stop() {
         gameLoopRunning = false;
         if (endScreenInterval) { clearInterval(endScreenInterval); endScreenInterval = null; }
+        pendingHumanAction = null;
+        waitingForHuman    = false;
     }
 
     get isPaused_() { return isPaused; }
