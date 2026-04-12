@@ -3,111 +3,176 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neuro Bot Wars - 3D Visualization</title>
+    <title>Neuro Bot Wars</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="banner"></div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     START SCREEN (shown before any game starts / after reset)
+     ═══════════════════════════════════════════════════════════ -->
+<div id="start-screen">
+    <div class="start-bg">
+        <div class="start-scanlines"></div>
+        <div class="start-grid-lines"></div>
+    </div>
+
+    <div class="start-content">
+        <!-- Title -->
+        <div class="start-title-block">
+            <div class="start-subtitle-top">A.I. COMBAT SIMULATION</div>
+            <h1 class="start-title">NEURO<br>BOT WARS</h1>
+            <div class="start-subtitle-bottom">CSE 3210 &nbsp;·&nbsp; ARTIFICIAL INTELLIGENCE LABORATORY</div>
+        </div>
+
+        <!-- Two bots flanking mode panel -->
+        <div class="start-arena">
+            <!-- AEGIS bot (left) -->
+            <div class="bot-display aegis-display">
+                <canvas id="aegis-canvas" width="180" height="220"></canvas>
+                <div class="bot-display-name" style="color:#4488ff;">AEGIS</div>
+                <div class="bot-display-role">MINIMAX STRATEGIST</div>
+                <div class="bot-stat-row"><span class="stat-label">Algorithm</span><span class="stat-val aegis-col">A* + Minimax</span></div>
+                <div class="bot-stat-row"><span class="stat-label">Style</span><span class="stat-val aegis-col">Defensive</span></div>
+            </div>
+
+            <!-- Mode selection center panel -->
+            <div class="mode-panel">
+                <div class="mode-panel-title">SELECT MODE</div>
+                <div class="mode-buttons">
+                    <button class="mode-btn" id="mode-ai-vs-ai" data-mode="ai-vs-ai">
+                        <div class="mode-btn-icon">⚔</div>
+                        <div class="mode-btn-label">AEGIS vs VELO</div>
+                        <div class="mode-btn-desc">AI vs AI · Full Simulation</div>
+                    </button>
+                    <button class="mode-btn" id="mode-human-vs-aegis" data-mode="human-vs-aegis">
+                        <div class="mode-btn-icon">🧠</div>
+                        <div class="mode-btn-label">Human vs AEGIS</div>
+                        <div class="mode-btn-desc">You control VELO</div>
+                    </button>
+                    <button class="mode-btn" id="mode-human-vs-velo" data-mode="human-vs-velo">
+                        <div class="mode-btn-icon">🎯</div>
+                        <div class="mode-btn-label">Human vs VELO</div>
+                        <div class="mode-btn-desc">You control AEGIS</div>
+                    </button>
+                </div>
+                <button class="start-play-btn" id="start-play-btn" disabled>
+                    <span class="start-play-icon">▶</span> START SIMULATION
+                </button>
+                <div class="start-note" id="start-mode-note">Select a mode above to begin</div>
+            </div>
+
+            <!-- VELO bot (right) -->
+            <div class="bot-display velo-display">
+                <canvas id="velo-canvas" width="180" height="220"></canvas>
+                <div class="bot-display-name" style="color:#ff4444;">VELO</div>
+                <div class="bot-display-role">GREEDY ASSASSIN</div>
+                <div class="bot-stat-row"><span class="stat-label">Algorithm</span><span class="stat-val velo-col">UCS + Greedy</span></div>
+                <div class="bot-stat-row"><span class="stat-label">Style</span><span class="stat-val velo-col">Aggressive</span></div>
+            </div>
+        </div>
+
+        <!-- Bottom decorative bar -->
+        <div class="start-bottom-bar">
+            <span class="bar-item">MAZE PHASE: PATHFINDING RACE</span>
+            <span class="bar-sep">◆</span>
+            <span class="bar-item">BATTLE PHASE: TURN-BASED COMBAT</span>
+            <span class="bar-sep">◆</span>
+            <span class="bar-item">3 ATTACK TYPES · HEALTH PICKUPS · DEFEND SYSTEM</span>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     GAME SCREEN (hidden until game starts)
+     ═══════════════════════════════════════════════════════════ -->
+<div id="game-screen" style="display:none; width:100vw; height:100vh; position:relative;">
+
+    <!-- Overlay HP bars (top corners) -->
     <div id="hp-aegis" class="hp-bar-container">
         <div class="hp-label">AEGIS</div>
-        <div class="hp-track"><div class="hp-fill" id="hp-fill-aegis" style="width:100%"></div></div>
+        <div class="hp-track"><div class="hp-fill hp-aegis-fill" id="hp-fill-aegis" style="width:100%"></div></div>
+        <div class="hp-num" id="hp-num-aegis">100</div>
     </div>
-    <div id="hp-velo" class="hp-bar-container">
-        <div class="hp-label">VELO</div>
-        <div class="hp-track"><div class="hp-fill" id="hp-fill-velo" style="width:100%"></div></div>
+    <div id="hp-velo" class="hp-bar-container hp-right">
+        <div class="hp-label" style="text-align:right;">VELO</div>
+        <div class="hp-track"><div class="hp-fill hp-velo-fill" id="hp-fill-velo" style="width:100%"></div></div>
+        <div class="hp-num" id="hp-num-velo">100</div>
     </div>
 
-    <div class="main-container">
-        <!-- Game viewport -->
-        <div id="game-container" class="game-viewport"></div>
+    <!-- Banner messages -->
+    <div id="banner"></div>
 
-        <!-- UI Overlay -->
-        <div class="ui-overlay">
-            <!-- Title -->
-            <div class="header">
-                <h1>NEURO BOT WARS</h1>
-                <p>3D Tactical AI Visualizer</p>
+    <!-- Current action log (replaces scrolling history) -->
+    <div id="action-log">
+        <div class="action-log-label">LAST ACTION</div>
+        <div id="action-log-text">—</div>
+    </div>
+
+    <!-- Three.js canvas target -->
+    <div id="game-container" style="width:100%;height:100%;"></div>
+
+    <!-- Bottom HUD -->
+    <div class="game-hud">
+        <div class="hud-agent aegis-hud">
+            <div class="hud-name">AEGIS</div>
+            <div class="hud-bar-wrap">
+                <div class="hud-bar aegis-bar-hud" id="hud-bar-aegis" style="width:100%"></div>
             </div>
+            <div class="hud-hp" id="hud-hp-aegis">100/100</div>
+        </div>
 
-            <!-- Game info -->
-            <div class="game-info">
-                <div class="info-panel">
-                    <div class="phase-display">
-                        <span class="label">PHASE:</span>
-                        <span id="phase-display" class="value">Maze Navigation</span>
-                    </div>
-                    <div class="turn-display">
-                        <span class="label">TURN:</span>
-                        <span id="turn-counter" class="value">0</span>
-                    </div>
-                </div>
+        <div class="hud-center">
+            <div class="hud-phase" id="hud-phase">Maze Navigation</div>
+            <div class="hud-turn">Turn <span id="hud-turn">0</span></div>
+            <div class="hud-controls">
+                <button id="pause-btn" class="hud-btn pause-btn" disabled>PAUSE</button>
+                <button id="reset-btn" class="hud-btn reset-btn">RESET</button>
             </div>
+        </div>
 
-            <!-- Agent stats -->
-            <div class="stats-panel">
-                <!-- Aegis stats -->
-                <div class="agent-stats aegis-stats">
-                    <div class="agent-name">AEGIS</div>
-                    <div class="agent-type">Blue Protocol</div>
-                    <div class="hp-bar-container">
-                        <div id="aegis-hp-bar" class="hp-bar aegis-bar"></div>
-                    </div>
-                    <div class="hp-text" id="aegis-hp-text">100/100</div>
-                </div>
-
-                <!-- Velo stats -->
-                <div class="agent-stats velo-stats">
-                    <div class="agent-name">VELO</div>
-                    <div class="agent-type">Red Protocol</div>
-                    <div class="hp-bar-container">
-                        <div id="velo-hp-bar" class="hp-bar velo-bar"></div>
-                    </div>
-                    <div class="hp-text" id="velo-hp-text">100/100</div>
-                </div>
+        <div class="hud-agent velo-hud">
+            <div class="hud-name">VELO</div>
+            <div class="hud-bar-wrap">
+                <div class="hud-bar velo-bar-hud" id="hud-bar-velo" style="width:100%"></div>
             </div>
-
-            <!-- Controls -->
-            <div class="controls-panel">
-                <button id="start-btn" class="control-btn start-btn">START</button>
-                <button id="pause-btn" class="control-btn pause-btn" disabled>PAUSE</button>
-                <button id="reset-btn" class="control-btn reset-btn">RESET</button>
-            </div>
-
-            <!-- Legend -->
-            <div class="legend-panel">
-                <div class="legend-title">LEGEND</div>
-                <div class="legend-items">
-                    <div class="legend-item">
-                        <div class="legend-color aegis-color"></div>
-                        <span>AEGIS (Blue)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color velo-color"></div>
-                        <span>VELO (Red)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color arena-color"></div>
-                        <span>Arena (3x3)</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color trap-color"></div>
-                        <span>Traps</span>
-                    </div>
-                </div>
-            </div>
+            <div class="hud-hp" id="hud-hp-velo">100/100</div>
         </div>
     </div>
 
-    <!-- Scripts -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="game/gameState.js"></script>
-    <script src="engine/coreEngine.js"></script>
-    <script src="scene/sceneSetup.js"></script>
-    <script src="scene/gridRenderer.js"></script>
-    <script src="objects/aegis.js"></script>
-    <script src="objects/velo.js"></script>
-    <script src="objects/trap.js"></script>
-    <script src="objects/arena.js"></script>
-    <script src="main.js"></script>
+    <!-- Human player controls (shown only in human mode, during battle) -->
+    <div id="human-controls" style="display:none;">
+        <div class="human-ctrl-title">YOUR TURN</div>
+        <div class="human-ctrl-row">
+            <button class="human-btn" id="btn-move-up">▲</button>
+        </div>
+        <div class="human-ctrl-row">
+            <button class="human-btn" id="btn-move-left">◄</button>
+            <button class="human-btn pass-btn" id="btn-pass">WAIT</button>
+            <button class="human-btn" id="btn-move-right">►</button>
+        </div>
+        <div class="human-ctrl-row">
+            <button class="human-btn" id="btn-move-down">▼</button>
+        </div>
+        <div class="human-ctrl-row human-attack-row">
+            <button class="human-btn attack-btn pulse-btn" id="btn-pulse">PULSE<br><small>5 dmg</small></button>
+            <button class="human-btn attack-btn burst-btn" id="btn-burst">BURST<br><small>10 dmg</small></button>
+            <button class="human-btn attack-btn beam-btn" id="btn-beam">BEAM<br><small>25 dmg</small></button>
+            <button class="human-btn defend-btn" id="btn-defend">DEFEND</button>
+        </div>
+    </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="game/gameState.js"></script>
+<script src="engine/coreEngine.js"></script>
+<script src="scene/sceneSetup.js"></script>
+<script src="scene/gridRenderer.js"></script>
+<script src="objects/aegis.js"></script>
+<script src="objects/velo.js"></script>
+<script src="objects/trap.js"></script>
+<script src="objects/arena.js"></script>
+<script src="main.js"></script>
 </body>
 </html>
