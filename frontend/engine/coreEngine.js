@@ -89,7 +89,7 @@ var HEALTH_PICKUP_HEAL       = 40;
 var MOVE_COOLDOWN_TURNS      = 3;
 var DEFEND_COOLDOWN_TURNS    = 1;
 var LOGIC_BURST_CHARGE_REQ   = 3;
-var MINIMAX_DEPTH            = 3;
+var MINIMAX_DEPTH            = 4;
 
 // ================================================================
 // === GRID HELPERS ===
@@ -660,10 +660,11 @@ function getLegalActions(agent, enemy) {
     if (dist <= 1) actions.push({ type: 'standard_attack' });
     if (agent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && dist <= 1)
         actions.push({ type: 'logic_burst' });
-    if (!agent.elementalBeamUsed && dist <= 2)
+    if (!agent.elementalBeamUsed && dist <= 1)
         actions.push({ type: 'elemental_beam' });
     if (agent.defendCooldown <= 0) actions.push({ type: 'defend' });
-    if (actions.length === 0) actions.push({ type: 'pass' });
+    // Always allow passing / waiting as fallback
+    actions.push({ type: 'pass' });
     return actions;
 }
 
@@ -970,12 +971,13 @@ function minimax(sim, origAgent, origEnemy, depth, alpha, beta, isMaximizing) {
         var minEval = Infinity;
         for (var j = 0; j < acts2.length; j++) {
             var childSim2 = simulateActionSim(acts2[j], simEnemy2, simAgent2);
+            // Flip perspective: what was enemy's state becomes "agent" for next maximizing call
             var flipped = {
-                agentPos: childSim2.enemyPos, agentHP: childSim2.enemyHP,
-                enemyPos: childSim2.agentPos, enemyHP: childSim2.agentHP,
-                moveCooldown: sim.moveCooldown, defendCooldown: sim.defendCooldown,
-                isDefending: sim.isDefending, burstCharge: sim.burstCharge,
-                beamUsed: sim.beamUsed
+                agentPos:      childSim2.enemyPos,    agentHP:       childSim2.enemyHP,
+                enemyPos:      childSim2.agentPos,    enemyHP:       childSim2.agentHP,
+                moveCooldown:  simAgent2.moveCooldown, defendCooldown: simAgent2.defendCooldown,
+                isDefending:   simAgent2.isDefending,  burstCharge:   simAgent2.logicBurstCharge,
+                beamUsed:      simAgent2.elementalBeamUsed
             };
             var ev2 = minimax(flipped, origAgent, origEnemy, depth - 1, alpha, beta, true);
             minEval = Math.min(minEval, ev2);
@@ -1063,20 +1065,37 @@ function applyActionToSim(action, r, enemyDefending) {
 
 function evaluateState(sim) {
     var score = 0;
-    score += (sim.agentHP - sim.enemyHP) * 2;
 
+    // HP difference is the primary driver — heavily weighted
+    score += (sim.agentHP - sim.enemyHP) * 10;
+
+    // Prefer being close to the enemy for attack opportunity
     var dist = chebyshev(sim.agentPos.col, sim.agentPos.row,
                          sim.enemyPos.col, sim.enemyPos.row);
-    score -= dist * 3;
+    if (dist === 0) {
+        score += 20;  // same cell (shouldn't happen but big bonus)
+    } else if (dist === 1) {
+        score += 15;  // adjacent — can attack
+    } else {
+        score -= dist * 5;  // penalise distance
+    }
 
-    score += sim.burstCharge * 5;
+    // Logic burst charge is valuable — worth roughly half a pulse strike per charge
+    score += sim.burstCharge * 3;
 
-    if (!sim.beamUsed) score += 15;
+    // Being low HP is bad (extra urgency)
+    if (sim.agentHP < 30) score -= 20;
+    if (sim.enemyHP < 30) score += 20;  // enemy near death is good
 
+    // Elemental beam: only bonus if we can actually use it this turn (adjacent or close)
+    if (!sim.beamUsed && dist <= 2) score += 8;
+
+    // Health pickup: seek it if hurt
     if (healthPickupActive && healthPickupPos) {
         var pickupDist = chebyshev(sim.agentPos.col, sim.agentPos.row,
                                    healthPickupPos.col, healthPickupPos.row);
-        if (sim.agentHP < 50) score -= pickupDist * 4;
+        if (sim.agentHP < 40) score -= pickupDist * 6;
+        else if (sim.agentHP < 60) score -= pickupDist * 2;
     }
     return score;
 }
@@ -1098,11 +1117,11 @@ function getLegalActionsForSim(simAgent, simEnemy) {
     if (dist <= 1) actions.push({ type: 'standard_attack' });
     if (simAgent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && dist <= 1)
         actions.push({ type: 'logic_burst' });
-    if (!simAgent.elementalBeamUsed && dist <= 2)
+    if (!simAgent.elementalBeamUsed && dist <= 1)
         actions.push({ type: 'elemental_beam' });
     if (simAgent.defendCooldown <= 0) actions.push({ type: 'defend' });
-
-    if (actions.length === 0) actions.push({ type: 'pass' });
+    // Pass always available so tree never has empty action list
+    actions.push({ type: 'pass' });
     return actions;
 }
 
@@ -1114,8 +1133,8 @@ function veloAI(agent, enemy) {
     var dist = chebyshev(agent.logicalPos.col, agent.logicalPos.row,
                          enemy.logicalPos.col, enemy.logicalPos.row);
 
-    // P1: Elemental beam if available and in range
-    if (!agent.elementalBeamUsed && dist <= 2) {
+    // P1: Elemental beam — only when adjacent (dist<=1) to make fight fair
+    if (!agent.elementalBeamUsed && dist <= 1) {
         var a = findAction(actions, 'elemental_beam');
         if (a) return a;
     }
