@@ -616,6 +616,13 @@ function chebyshev(c1, r1, c2, r2) {
     return Math.max(Math.abs(c1 - c2), Math.abs(r1 - r2));
 }
 
+// Cardinal-only adjacency: same row OR same column, exactly 1 step apart
+function isCardinalAdjacent(c1, r1, c2, r2) {
+    var dc = Math.abs(c1 - c2);
+    var dr = Math.abs(r1 - r2);
+    return (dc === 1 && dr === 0) || (dc === 0 && dr === 1);
+}
+
 function isArenaCell(col, row) {
     return col >= ARENA_MIN && col <= ARENA_MAX &&
            row >= ARENA_MIN && row <= ARENA_MAX;
@@ -648,8 +655,8 @@ function getArenaMoves(agent, allAgents) {
 
 function getLegalActions(agent, enemy) {
     var actions = [];
-    var dist = chebyshev(agent.logicalPos.col, agent.logicalPos.row,
-                         enemy.logicalPos.col, enemy.logicalPos.row);
+    var adj = isCardinalAdjacent(agent.logicalPos.col, agent.logicalPos.row,
+                                 enemy.logicalPos.col, enemy.logicalPos.row);
 
     if (agent.moveCooldown <= 0) {
         var moves = getArenaMoves(agent, [agent, enemy]);
@@ -657,10 +664,10 @@ function getLegalActions(agent, enemy) {
             actions.push({ type: 'move', target: moves[i] });
         }
     }
-    if (dist <= 1) actions.push({ type: 'standard_attack' });
-    if (agent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && dist <= 1)
+    if (adj) actions.push({ type: 'standard_attack' });
+    if (agent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && adj)
         actions.push({ type: 'logic_burst' });
-    if (!agent.elementalBeamUsed && dist <= 1)
+    if (!agent.elementalBeamUsed && adj)
         actions.push({ type: 'elemental_beam' });
     if (agent.defendCooldown <= 0) actions.push({ type: 'defend' });
     // Always allow passing / waiting as fallback
@@ -856,21 +863,7 @@ function spawnHealthPickup() {
     }
     if (emptyCells.length === 0) return;
 
-    var bestCell = null;
-    var bestDiff = Infinity;
-    var bestCenterDist = Infinity;
-    for (var i = 0; i < emptyCells.length; i++) {
-        var cell = emptyCells[i];
-        var da = chebyshev(cell.col, cell.row, aegis.logicalPos.col, aegis.logicalPos.row);
-        var dv = chebyshev(cell.col, cell.row, velo.logicalPos.col, velo.logicalPos.row);
-        var diff = Math.abs(da - dv);
-        var centerDist = chebyshev(cell.col, cell.row, 4, 4);
-        if (diff < bestDiff || (diff === bestDiff && centerDist < bestCenterDist)) {
-            bestDiff = diff;
-            bestCenterDist = centerDist;
-            bestCell = cell;
-        }
-    }
+    var bestCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
 
     if (!bestCell) return;
 
@@ -1072,10 +1065,12 @@ function evaluateState(sim) {
     // Prefer being close to the enemy for attack opportunity
     var dist = chebyshev(sim.agentPos.col, sim.agentPos.row,
                          sim.enemyPos.col, sim.enemyPos.row);
+    var adjToEnemy = isCardinalAdjacent(sim.agentPos.col, sim.agentPos.row,
+                                        sim.enemyPos.col, sim.enemyPos.row);
     if (dist === 0) {
         score += 20;  // same cell (shouldn't happen but big bonus)
-    } else if (dist === 1) {
-        score += 15;  // adjacent — can attack
+    } else if (adjToEnemy) {
+        score += 15;  // cardinally adjacent — can attack
     } else {
         score -= dist * 5;  // penalise distance
     }
@@ -1102,8 +1097,8 @@ function evaluateState(sim) {
 
 function getLegalActionsForSim(simAgent, simEnemy) {
     var actions = [];
-    var dist = chebyshev(simAgent.logicalPos.col, simAgent.logicalPos.row,
-                         simEnemy.logicalPos.col, simEnemy.logicalPos.row);
+    var adj = isCardinalAdjacent(simAgent.logicalPos.col, simAgent.logicalPos.row,
+                                 simEnemy.logicalPos.col, simEnemy.logicalPos.row);
 
     if (simAgent.moveCooldown <= 0) {
         for (var i = 0; i < DIRS8.length; i++) {
@@ -1114,10 +1109,10 @@ function getLegalActionsForSim(simAgent, simEnemy) {
             actions.push({ type: 'move', target: { col: nc, row: nr } });
         }
     }
-    if (dist <= 1) actions.push({ type: 'standard_attack' });
-    if (simAgent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && dist <= 1)
+    if (adj) actions.push({ type: 'standard_attack' });
+    if (simAgent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && adj)
         actions.push({ type: 'logic_burst' });
-    if (!simAgent.elementalBeamUsed && dist <= 1)
+    if (!simAgent.elementalBeamUsed && adj)
         actions.push({ type: 'elemental_beam' });
     if (simAgent.defendCooldown <= 0) actions.push({ type: 'defend' });
     // Pass always available so tree never has empty action list
@@ -1130,20 +1125,22 @@ function getLegalActionsForSim(simAgent, simEnemy) {
 // ================================================================
 function veloAI(agent, enemy) {
     var actions = getLegalActions(agent, enemy);
+    var adj = isCardinalAdjacent(agent.logicalPos.col, agent.logicalPos.row,
+                                 enemy.logicalPos.col, enemy.logicalPos.row);
     var dist = chebyshev(agent.logicalPos.col, agent.logicalPos.row,
                          enemy.logicalPos.col, enemy.logicalPos.row);
 
-    // P1: Elemental beam — only when adjacent (dist<=1) to make fight fair
-    if (!agent.elementalBeamUsed && dist <= 1) {
+    // P1: Elemental beam — only when cardinally adjacent
+    if (!agent.elementalBeamUsed && adj) {
         var a = findAction(actions, 'elemental_beam');
         if (a) return a;
     }
-    // P2: Logic burst if charged and adjacent
-    if (agent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && dist <= 1) {
+    // P2: Logic burst if charged and cardinally adjacent
+    if (agent.logicBurstCharge >= LOGIC_BURST_CHARGE_REQ && adj) {
         var a2 = findAction(actions, 'logic_burst');
         if (a2) return a2;
     }
-    // P3: Collect health pickup if adjacent and HP < 60%
+    // P3: Collect health pickup if on same row/col and HP < 60%
     if (healthPickupActive && healthPickupPos &&
         agent.hp < agent.maxHP * 0.6 && agent.moveCooldown <= 0) {
         var pd = chebyshev(agent.logicalPos.col, agent.logicalPos.row,
@@ -1154,8 +1151,8 @@ function veloAI(agent, enemy) {
             if (m) return m;
         }
     }
-    // P4: Pulse Strike if adjacent
-    if (dist <= 1) {
+    // P4: Pulse Strike if cardinally adjacent
+    if (adj) {
         var a3 = findAction(actions, 'standard_attack');
         if (a3) return a3;
     }

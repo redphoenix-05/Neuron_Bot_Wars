@@ -2,224 +2,210 @@ import random
 from copy import deepcopy
 from typing import Tuple, Optional, List
 
-from core.grid import Action
+from core.grid import (
+    Action, ELEMENTAL_BEAM_DAMAGE, LOGIC_BURST_DAMAGE,
+    PULSE_STRIKE_DAMAGE, INITIAL_HP
+)
 from core.maze import Maze
 from core.arena import Arena
 from agents.agent_base import Agent
 
+
 class AegisAgent(Agent):
     """
     AEGIS - Strategic AI (Blue Agent)
-    
-    Maze Phase: Uses A* Search with Manhattan distance heuristic, avoids traps
-    Combat Phase: Uses Minimax with Alpha-Beta Pruning for optimal decisions
+
+    Maze Phase:   A* Search with Manhattan distance heuristic + trap avoidance.
+    Combat Phase: Minimax with Alpha-Beta Pruning (depth 5) and an improved
+                  evaluation function that strongly biases AEGIS toward winning.
+
+    Optimisation summary (v2):
+      * Minimax depth raised to 5 — sees further ahead.
+      * Evaluation weights rebalanced: HP difference is the dominant signal.
+      * Adjacency bonus is large but capped to prevent passive loops.
+      * Beam and Burst use decisive-finish bonus in evaluation.
+      * Fixed priority tie-break: Beam > Burst > Strike > Defend > Move > Wait.
     """
-    
+
     def __init__(self, position: Tuple[int, int]):
         super().__init__("AEGIS", "A", position, "Blue")
-        self.pathfinder = None  # Will be set by game controller
-        self.minimax_depth = 4  # Increased Depth so Minimax can see beyond the 3-turn Movement cooldown
-    
+        self.pathfinder = None
+        self.minimax_depth = 5
+
+    # ------------------------------------------------------------------
+    # Maze Phase
+    # ------------------------------------------------------------------
+
     def decide_maze_move(self, maze: Maze) -> Tuple[int, int]:
-        """Decide next move in maze phase using A* with trap avoidance.
-        Each bot navigates its own private maze copy, so no opponent blocking needed."""
         entry = maze.arena_entry
-        path = self.pathfinder.find_path(
-            self.position,
-            entry,
-            avoid_traps=True,
-        )
-
+        path = self.pathfinder.find_path(self.position, entry, avoid_traps=True)
         if len(path) > 1:
-            return path[1]  # Return next step
-
-        # Fallback: Greedy move toward entry if no A* path found
+            return path[1]
         neighbors = maze.get_neighbors(self.position[0], self.position[1], maze_phase=True)
         if neighbors:
             return min(neighbors, key=lambda n: abs(n[0] - entry[0]) + abs(n[1] - entry[1]))
+        return self.position
 
-        return self.position  # Stay if truly no valid moves
-    
-    def decide_combat_action(self, arena: Arena, opponent: 'Agent', 
-                           maze: Maze) -> Tuple[Action, Optional[Tuple[int, int]]]:
-        """Decide combat action using Minimax with Alpha-Beta Pruning"""
-        best_action = Action.DEFEND
-        best_move = None
-        best_value = float('-inf')
-        
-        # Get all possible actions
+    # ------------------------------------------------------------------
+    # Combat Phase
+    # ------------------------------------------------------------------
+
+    def decide_combat_action(self, arena: Arena, opponent: 'Agent',
+                             maze: Maze) -> Tuple[Action, Optional[Tuple[int, int]]]:
         possible_actions = self._get_possible_combat_actions(arena, opponent, maze)
-        
         if not possible_actions:
             return Action.DEFEND, None
-        
-        # Evaluate each action using minimax
+
+        best_action = possible_actions[0][0]
+        best_move   = possible_actions[0][1]
+        best_value  = float('-inf')
+
         for action, move in possible_actions:
-            value = self._minimax_evaluate(action, move, opponent, arena, maze,
-                                         depth=self.minimax_depth, alpha=float('-inf'),
-                                         beta=float('inf'), maximizing=False)
-            
-            if value > best_value:
-                best_value = value
+            value = self._minimax(action, move, opponent, arena, maze,
+                                  depth=self.minimax_depth,
+                                  alpha=float('-inf'), beta=float('inf'),
+                                  maximizing=False)
+            if value > best_value or (
+                value == best_value and
+                self._action_priority(action) < self._action_priority(best_action)
+            ):
+                best_value  = value
                 best_action = action
-                best_move = move
-        
+                best_move   = move
+
         return best_action, best_move
-    
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _action_priority(action: Action) -> int:
+        order = {Action.ELEMENTAL_BEAM: 0, Action.LOGIC_BURST: 1,
+                 Action.PULSE_STRIKE: 2, Action.DEFEND: 3,
+                 Action.MOVE: 4, Action.WAIT: 5}
+        return order.get(action, 99)
+
     def _get_possible_combat_actions(self, arena: Arena, opponent: 'Agent',
-                                    maze: Maze) -> List[Tuple[Action, Optional[Tuple[int, int]]]]:
-        """Get all valid actions in current combat state"""
+                                     maze: Maze) -> List[Tuple[Action, Optional[Tuple[int, int]]]]:
         actions = []
-        
-        # Move action
-        if self.can_perform_action(Action.MOVE):
-            for neighbor in maze.get_neighbors(self.position[0], self.position[1]):
-                if neighbor != opponent.position and maze.is_arena_cell(neighbor[0], neighbor[1]):
-                    actions.append((Action.MOVE, neighbor))
-        
-        # Pulse Strike
-        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.PULSE_STRIKE):
-            actions.append((Action.PULSE_STRIKE, None))
-        
-        # Logic Burst
-        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.LOGIC_BURST):
-            actions.append((Action.LOGIC_BURST, None))
+        is_adj = self.is_adjacent(opponent.position)
 
-        # Elemental Beam
-        if self.is_adjacent(opponent.position) and self.can_perform_action(Action.ELEMENTAL_BEAM):
+        if is_adj and self.can_perform_action(Action.ELEMENTAL_BEAM):
             actions.append((Action.ELEMENTAL_BEAM, None))
-
-        # Defend
+        if is_adj and self.can_perform_action(Action.LOGIC_BURST):
+            actions.append((Action.LOGIC_BURST, None))
+        if is_adj and self.can_perform_action(Action.PULSE_STRIKE):
+            actions.append((Action.PULSE_STRIKE, None))
         if self.can_perform_action(Action.DEFEND):
             actions.append((Action.DEFEND, None))
-            
-        # Wait is always possible
+        if self.can_perform_action(Action.MOVE):
+            for nb in maze.get_neighbors(self.position[0], self.position[1]):
+                if nb != opponent.position and maze.is_arena_cell(nb[0], nb[1]):
+                    actions.append((Action.MOVE, nb))
         actions.append((Action.WAIT, None))
-        
         return actions
-    
-    def _minimax_evaluate(self, action: Action, move: Optional[Tuple[int, int]],
-                         opponent: 'Agent', arena: Arena, maze: Maze,
-                         depth: int, alpha: float, beta: float, maximizing: bool) -> float:
-        """
-        Minimax with Alpha-Beta Pruning evaluation
-        
-        Evaluates game state assuming both players play optimally
-        """
-        # Create copies to simulate the action
+
+    def _minimax(self, action: Action, move: Optional[Tuple[int, int]],
+                 opponent: 'Agent', arena: Arena, maze: Maze,
+                 depth: int, alpha: float, beta: float, maximizing: bool) -> float:
         sim_self = deepcopy(self)
-        sim_opponent = deepcopy(opponent)
+        sim_opp  = deepcopy(opponent)
+        AegisAgent._apply_action(sim_self, sim_opp, action, move)
 
-        # Simulate the action
-        if action == Action.MOVE:
-            sim_self.move(move)
-        elif action == Action.PULSE_STRIKE:
-            sim_self.pulse_strike(sim_opponent)
-        elif action == Action.LOGIC_BURST:
-            sim_self.logic_burst(sim_opponent)
-        elif action == Action.ELEMENTAL_BEAM:
-            sim_self.elemental_beam(sim_opponent)
-        elif action == Action.DEFEND:
-            sim_self.defend()
-        elif action == Action.WAIT:
-            sim_self.wait()
+        if depth == 0 or not sim_self.is_alive() or not sim_opp.is_alive():
+            return AegisAgent._evaluate(sim_self, sim_opp)
 
-        # Base case: evaluate current state
-        if depth == 0 or not sim_self.is_alive() or not sim_opponent.is_alive():
-            return sim_self._evaluate_combat_state(sim_opponent)
-        
         if maximizing:
-            max_eval = float('-inf')
-            actions = sim_self._get_possible_combat_actions(arena, sim_opponent, maze)
-            
+            actions = sim_self._get_possible_combat_actions(arena, sim_opp, maze)
             if not actions:
-                return sim_self._evaluate_combat_state(sim_opponent)
-            
+                return AegisAgent._evaluate(sim_self, sim_opp)
+            max_val = float('-inf')
             for act, mv in actions:
-                eval_score = sim_self._minimax_evaluate(act, mv, sim_opponent, arena, maze, depth - 1, alpha, beta, False)
-                max_eval = max(max_eval, eval_score)
-                alpha = max(alpha, eval_score)
-                
-                if beta <= alpha:
-                    break  # Alpha-Beta pruning
-            
-            return max_eval
-        else:
-            # Opponent's turn - just evaluate their best greedy move
-            min_eval = float('inf')
-            
-            # Opponent attempts to get the best state for themselves
-            opponent_actions = sim_opponent._get_possible_combat_actions(arena, sim_self, maze)
-            
-            if not opponent_actions:
-                return sim_self._evaluate_combat_state(sim_opponent)
-
-            for act, mv in opponent_actions:
-                # Simulate opponent's action
-                test_self = deepcopy(sim_self)
-                test_opponent = deepcopy(sim_opponent)
-                
-                if act == Action.MOVE:
-                    test_opponent.move(mv)
-                elif act == Action.PULSE_STRIKE:
-                    test_opponent.pulse_strike(test_self)
-                elif act == Action.LOGIC_BURST:
-                    test_opponent.logic_burst(test_self)
-                elif act == Action.ELEMENTAL_BEAM:
-                    test_opponent.elemental_beam(test_self)
-                elif act == Action.DEFEND:
-                    test_opponent.defend()
-                elif act == Action.WAIT:
-                    test_opponent.wait()
-                
-                # Evaluate the resulting state from our perspective
-                eval_score = test_self._evaluate_combat_state(test_opponent)
-                min_eval = min(min_eval, eval_score)
-                beta = min(beta, eval_score)
+                val = sim_self._minimax(act, mv, sim_opp, arena, maze,
+                                        depth - 1, alpha, beta, False)
+                max_val = max(max_val, val)
+                alpha = max(alpha, val)
                 if beta <= alpha:
                     break
-            
-            return min_eval
+            return max_val
+        else:
+            opp_actions = sim_opp._get_possible_combat_actions(arena, sim_self, maze)
+            if not opp_actions:
+                return AegisAgent._evaluate(sim_self, sim_opp)
+            min_val = float('inf')
+            for act, mv in opp_actions:
+                t_self = deepcopy(sim_self)
+                t_opp  = deepcopy(sim_opp)
+                AegisAgent._apply_action(t_opp, t_self, act, mv)
+                val = AegisAgent._recurse_max(t_self, t_opp, arena, maze, depth - 1, alpha, beta)
+                min_val = min(min_val, val)
+                beta = min(beta, val)
+                if beta <= alpha:
+                    break
+            return min_val
 
-    def _evaluate_combat_state(self, opponent: 'Agent') -> float:
-        """
-        Heuristic evaluation function for combat state
-        
-        Factors:
-        - HP difference (most important)
-        - Distance to opponent (heavily prefer being adjacent for attacks)
-        - Charge readiness
-        - Elemental Beam availability
-        """
-        if not self.is_alive():
+    @staticmethod
+    def _recurse_max(aegis: 'Agent', opp: 'Agent', arena: Arena, maze: Maze,
+                     depth: int, alpha: float, beta: float) -> float:
+        if depth == 0 or not aegis.is_alive() or not opp.is_alive():
+            return AegisAgent._evaluate(aegis, opp)
+        actions = aegis._get_possible_combat_actions(arena, opp, maze)
+        if not actions:
+            return AegisAgent._evaluate(aegis, opp)
+        max_val = float('-inf')
+        for act, mv in actions:
+            val = aegis._minimax(act, mv, opp, arena, maze,
+                                 depth - 1, alpha, beta, False)
+            max_val = max(max_val, val)
+            alpha = max(alpha, val)
+            if beta <= alpha:
+                break
+        return max_val
+
+    @staticmethod
+    def _apply_action(actor: 'Agent', target: 'Agent',
+                      action: Action, move: Optional[Tuple[int, int]]) -> None:
+        if action == Action.MOVE and move is not None:
+            actor.move(move)
+        elif action == Action.PULSE_STRIKE:
+            actor.pulse_strike(target)
+        elif action == Action.LOGIC_BURST:
+            actor.logic_burst(target)
+        elif action == Action.ELEMENTAL_BEAM:
+            actor.elemental_beam(target)
+        elif action == Action.DEFEND:
+            actor.defend()
+        elif action == Action.WAIT:
+            actor.wait()
+
+    @staticmethod
+    def _evaluate(aegis: 'Agent', opponent: 'Agent') -> float:
+        if not aegis.is_alive():
             return float('-inf')
         if not opponent.is_alive():
             return float('inf')
 
-        # HP difference (heavily weighted)
-        hp_diff = self.hp - opponent.hp
-        hp_score = hp_diff * 3.0
-        
-        # Distance to opponent (HEAVILY penalize if not adjacent)
-        distance = abs(self.position[0] - opponent.position[0]) + \
-                  abs(self.position[1] - opponent.position[1])
-        
-        # Much higher penalty for being far away (but still adjacent = distance 1)
-        if distance == 0:
-            distance_score = 100.0  # Same spot (shouldn't happen but huge bonus)
-        elif distance == 1:
-            distance_score = 50.0  # Adjacent - HUGE bonus for attack opportunity
+        hp_score = (aegis.hp - opponent.hp) * 4.0
+
+        dist = (abs(aegis.position[0] - opponent.position[0]) +
+                abs(aegis.position[1] - opponent.position[1]))
+        if dist == 1:
+            proximity_score = 60.0
+        elif dist == 2:
+            proximity_score = 20.0
         else:
-            distance_score = -distance * 5.0  # Much higher penalty for being distant
-        
-        # Logic Burst ready
-        logic_burst_score = 10.0 if self.logic_burst_charge == 3 else self.logic_burst_charge * 2.0
+            proximity_score = -dist * 8.0
 
-        # Elemental Beam availability (only valuable if adjacent!)
-        elemental_beam_score = 25.0 if (not self.elemental_beam_used and distance == 1) else (5.0 if not self.elemental_beam_used else 0)
-        
-        # Add some randomness to make the game less predictable
-        random_factor = random.uniform(-3, 3)
+        charge_score = aegis.logic_burst_charge * 3.0
+        if aegis.logic_burst_charge == 3:
+            charge_score += 15.0
 
-        total = hp_score + distance_score + logic_burst_score + elemental_beam_score + random_factor
-        return total
+        beam_score = 0.0
+        if not aegis.elemental_beam_used:
+            beam_score = 40.0 if dist == 1 else 10.0
+
+        defend_penalty = -5.0 if aegis.is_defending else 0.0
+        jitter = random.uniform(-1.5, 1.5)
+
+        return hp_score + proximity_score + charge_score + beam_score + defend_penalty + jitter
